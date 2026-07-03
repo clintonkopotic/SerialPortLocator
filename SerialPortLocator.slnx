@@ -1,4 +1,5 @@
 <Solution>
   <Project Path="SerialPortLocator.CLI/SerialPortLocator.CLI.csproj" />
+  <Project Path="SerialPortLocator.LIB.Tests/SerialPortLocator.LIB.Tests.csproj" Id="c660a5ca-0cfe-4034-9f3b-d63739def811" />
   <Project Path="SerialPortLocator.LIB/SerialPortLocator.LIB.csproj" />
 </Solution>
