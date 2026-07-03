@@ -1,0 +1,15 @@
+{
+  "profiles": {
+    "SerialPortLocator.CLI": {
+      "commandName": "Project"
+    },
+    "SerialPortLocator.CLI Help": {
+      "commandName": "Project",
+      "commandLineArgs": "--help"
+    },
+    "SerialPortLocator.CLI Version": {
+      "commandName": "Project",
+      "commandLineArgs": "--version"
+    }
+  }
+}

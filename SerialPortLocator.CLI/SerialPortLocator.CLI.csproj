@@ -1,0 +1,26 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+		<TargetFramework>net10.0</TargetFramework>
+		<ImplicitUsings>disable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<AssemblyName>SerialPortLocator</AssemblyName>
+		<Version>0.0.1-dev</Version>
+		<Description>Assists in locating the physical serial port with the OS identification designator (e.g., COM port, /dev/tty…) with the use of a loopback adapter.</Description>
+		<Authors>Clinton Kopotic</Authors>
+		<Copyright>Copyright (c) Clinton Kopotic</Copyright>
+		<RepositoryUrl>https://github.com/clintonkopotic/SerialPortLocator</RepositoryUrl>
+		<RepositoryType>git</RepositoryType>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="System.CommandLine" Version="2.0.9" />
+		<PackageReference Include="System.IO.Ports" Version="10.0.9" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\SerialPortLocator.LIB\SerialPortLocator.LIB.csproj" />
+	</ItemGroup>
+
+</Project>
