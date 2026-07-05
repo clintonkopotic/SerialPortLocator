@@ -46,6 +46,14 @@ internal class Program
                 + "encounter an exception.",
         };
 
+    Option<bool> RetryPortsOnLocate { get; }
+        = new("--retry-ports-on-locate")
+        {
+            Description = "When a port is located, it will continue to be "
+                + "located. The default behaviour is to ignore it after it is "
+                + "located.",
+        };
+
     Option<bool> UseNullModemCableOption { get; }
         = new("--use-nullmodem-cable")
         {
@@ -66,6 +74,7 @@ internal class Program
         rootCommand.SetAction(_ => _actionRan = true);
         rootCommand.Add(PortsToIgnoreOption);
         rootCommand.Add(RetryPortsOnExceptionOption);
+        rootCommand.Add(RetryPortsOnLocate);
         // TODO: Add option when NullModemCable mode is implemented.
         //rootCommand.Add(UseNullModemCableOption);
         CustomHelpAction.UpdateWith(rootCommand);
@@ -100,6 +109,12 @@ internal class Program
             && !retryPortsOnExceptionOptionResult.Implicit
             && parseResult.GetValue(RetryPortsOnExceptionOption);
 
+        var retryPortsOnLocateOptionResult = parseResult.GetResult(
+            RetryPortsOnLocate);
+        var retryPortsOnLocate = retryPortsOnLocateOptionResult is not null
+            && !retryPortsOnLocateOptionResult.Implicit
+            && parseResult.GetValue(RetryPortsOnLocate);
+
         var useNullModemCableOptionResult = parseResult.GetResult(
             UseNullModemCableOption);
         // Only use the NullModemCable mode if the option is specified on the
@@ -117,11 +132,13 @@ internal class Program
                 {
                     PortsToIgnore = portsToIgnore,
                     RetryPortsOnException = retryPortsOnException,
+                    RetryPortsOnLocate = retryPortsOnLocate,
                 },
                 parseResult.InvocationConfiguration.Output,
                 _cancellationTokenSource.Token),
             _ => throw new NotImplementedException("The following mode is not "
-                + $"implemented: {locatorMode}."),
+                + "implemented: "
+                + $"{Format(locatorMode, nameWithIndent: false)}."),
         };
     }
 
@@ -145,21 +162,15 @@ internal class Program
         CancellationToken cancellationToken = default)
     {
         output ??= TextWriter.Null;
-        output.WriteLine("Starting Loopback Adapter mode...");
-        output.WriteLine("  (Press CTRL+C to exit)");
-        HashSet<string> portsToIgnore = [];
-        output.Write($"  {nameof(portsToIgnore)}: ");
-
-        foreach (var portToIgnore in options.PortsToIgnore)
-        {
-            _ = portsToIgnore.Add(portToIgnore);
-        }
-
-        WriteTo(output, portsToIgnore, writeNameWithIndent: false);
+        output.WriteLine("Loopback Adapter mode.");
+        HashSet<string> portsToIgnore = [.. options.PortsToIgnore];
+        output.WriteLine(Format(portsToIgnore));
 
         var retryPortsOnException = options.RetryPortsOnException;
-        output.WriteLine($"  {nameof(retryPortsOnException)}: "
-            + $"{retryPortsOnException}.");
+        output.WriteLine(Format(retryPortsOnException));
+
+        var retryPortsOnLocate = options.RetryPortsOnLocate;
+        output.WriteLine(Format(retryPortsOnLocate));
 
         Queue<string> portNames = [];
         SerialPort? serialPort = null;
@@ -175,6 +186,8 @@ internal class Program
 
                 if (portNames.Count <= 0)
                 {
+                    output.WriteLine("Remember, press CTRL+C to exit.");
+                    Thread.Sleep(1_000);
                     var _portNames = SerialPort.GetPortNames();
                     var numberOfPorts = _portNames.Length;
 
@@ -187,16 +200,10 @@ internal class Program
 
                     output.Write($"Preparing to test {numberOfPorts} port"
                         + (numberOfPorts != 1 ? "s" : string.Empty) + "...");
-
-                    foreach (var _portName in _portNames)
-                    {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        portNames.Enqueue(_portName);
-                    }
-
+                    portNames = new(_portNames);
                     output.WriteLine("READY");
-                    WriteTo(output, portNames);
-                    WriteTo(output, portsToIgnore);
+                    output.WriteLine(Format(portNames));
+                    output.WriteLine(Format(portsToIgnore));
                 }
 
                 cancellationToken.ThrowIfCancellationRequested();
@@ -307,25 +314,33 @@ internal class Program
                 {
                     output.WriteLine("** Loopback Adapter found on port: "
                         + $"\"{portName}\". **");
+
+                    if (!retryPortsOnLocate)
+                    {
+                        output.WriteLine("Going forward, ignoring port: "
+                            + $"\"{portName}\".");
+                        _ = portsToIgnore.Add(portName);
+                    }
+
                     output.WriteLine("Press ENTER to continue or CTRL+C to "
                         + "exit.");
 
                     while (true)
                     {
-                        while (Console.KeyAvailable)
+                        while (!Console.KeyAvailable)
                         {
                             cancellationToken.ThrowIfCancellationRequested();
-                            var consoleKeyInfo = Console.ReadKey(true);
-
-                            if (consoleKeyInfo.Key == ConsoleKey.Enter
-                                && consoleKeyInfo.Modifiers == ConsoleModifiers.None)
-                            {
-                                break;
-                            }
+                            Thread.Sleep(100);
                         }
 
                         cancellationToken.ThrowIfCancellationRequested();
-                        Thread.Sleep(100);
+                        var consoleKeyInfo = Console.ReadKey(true);
+
+                        if (consoleKeyInfo.Key == ConsoleKey.Enter
+                            && consoleKeyInfo.Modifiers == ConsoleModifiers.None)
+                        {
+                            break;
+                        }
                     }
                 }
             }
@@ -365,26 +380,117 @@ internal class Program
         }
     }
 
-    static void WriteTo(TextWriter output,
-        IReadOnlyCollection<string> collection,
+    static string Format(IReadOnlyCollection<string> collection,
         [CallerArgumentExpression(nameof(collection))] string?
-        collectionParamName = null,
-        string indent = "  ", bool writeNameWithIndent = true)
+        paramName = null, string indent = "  ", bool nameWithIndent = true)
     {
-        if (writeNameWithIndent)
+        StringBuilder output = new();
+
+        if (nameWithIndent)
         {
-            output.Write($"{indent}{collectionParamName}: ");
+            _ = output.Append(FormatNameWithIndent(paramName, indent));
         }
 
         if (collection.Count > 0)
         {
-            output.Write($"\"{CsvArgumentEncoder.Encode(collection)}\"");
+            output.Append($"\"{CsvArgumentEncoder.Encode(collection)}\"");
         }
         else
         {
-            output.Write("<none>");
+            output.Append("<none>");
         }
 
-        output.WriteLine('.');
+        if (nameWithIndent)
+        {
+            output.Append('.');
+        }
+
+        return output.ToString();
     }
+
+    static string Format(object @object,
+        [CallerArgumentExpression(nameof(@object))] string? paramName = null,
+        string indent = "  ", bool nameWithIndent = true)
+    {
+        StringBuilder output = new();
+
+        if (nameWithIndent)
+        {
+            _ = output.Append(FormatNameWithIndent(paramName, indent));
+        }
+
+        _ = output.Append(@object);
+
+        if (nameWithIndent)
+        {
+            _ = output.Append('.');
+        }
+
+        return output.ToString();
+    }
+
+    static string Format<TEnum>(TEnum @enum,
+        [CallerArgumentExpression(nameof(@enum))] string?
+        paramName = null, string indent = "  ", bool nameWithIndent = true)
+        where TEnum : struct, Enum
+    {
+        StringBuilder output = new();
+
+        if (nameWithIndent)
+        {
+            _ = output.Append(FormatNameWithIndent(paramName, indent));
+        }
+
+        _ = output.Append(Enum.IsDefined(@enum) ? @enum.ToString()
+            : "<undefined>");
+
+        var underlyingType = Enum.GetUnderlyingType(typeof(TEnum));
+        object? underlyingValue = null;
+
+        if (underlyingType == typeof(int))
+        {
+            underlyingValue = (int)(object)@enum;
+        }
+        else if (underlyingType == typeof(byte))
+        {
+            underlyingValue = (byte)(object)@enum;
+        }
+        else if (underlyingType == typeof(sbyte))
+        {
+            underlyingValue = (sbyte)(object)@enum;
+        }
+        else if (underlyingType == typeof(short))
+        {
+            underlyingValue = (short)(object)@enum;
+        }
+        else if (underlyingType == typeof(ushort))
+        {
+            underlyingValue = (ushort)(object)@enum;
+        }
+        else if (underlyingType == typeof(uint))
+        {
+            underlyingValue = (uint)(object)@enum;
+        }
+        else if (underlyingType == typeof(long))
+        {
+            underlyingValue = (long)(object)@enum;
+        }
+        else if (underlyingType == typeof(ulong))
+        {
+            underlyingValue = (ulong)(object)@enum;
+        }
+
+        _ = output.AppendFormat(" ({0})", underlyingValue is not null
+            ? underlyingValue.ToString() : "null");
+
+        if (nameWithIndent)
+        {
+            output.Append('.');
+        }
+
+        return output.ToString();
+    }
+
+    static string FormatNameWithIndent(string? paramName, string indent = "  ")
+        => $"{indent}{paramName}: ";
 }

@@ -8,4 +8,6 @@ public record LoopbackAdapterModeOptions
         = new HashSet<string>();
 
     public bool RetryPortsOnException { get; set; }
+
+    public bool RetryPortsOnLocate { get; set; }
 }

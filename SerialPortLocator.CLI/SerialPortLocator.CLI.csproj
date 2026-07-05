@@ -6,7 +6,7 @@
 		<ImplicitUsings>disable</ImplicitUsings>
 		<Nullable>enable</Nullable>
 		<AssemblyName>SerialPortLocator</AssemblyName>
-		<Version>0.0.1-dev2</Version>
+		<Version>0.0.1-dev3</Version>
 		<Description>Assists in locating the physical serial port with the OS identification designator (e.g., COM port, /dev/tty…) with the use of a loopback adapter.</Description>
 		<Authors>Clinton Kopotic</Authors>
 		<Copyright>Copyright (c) Clinton Kopotic</Copyright>
