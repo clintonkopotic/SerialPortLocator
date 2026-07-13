@@ -12,7 +12,7 @@ using System.Text;
 using System.Threading;
 using SerialPortLocator.LIB;
 
-internal class Program
+internal partial class Program
 {
     /// <summary>
     /// Entry point.
@@ -38,20 +38,40 @@ internal class Program
             HelpName = "\"CSV\""
         };
 
+    Option<string> PortsToTestOption { get; }
+        = new("--ports-to-test")
+        {
+            Description = "A comma (\',\') separated values (CSV) string of "
+                + "ports to test. The default behavior is to to query for a "
+                + "list of valid serial port names. Use the backslash (\'\\\') "
+                + "character to escape comma or backslash characters that are "
+                + "to be preserved. For example, \"COM3,COM4,COM6,COM7\".",
+            DefaultValueFactory = _ => string.Empty,
+            HelpName = "\"CSV\""
+        };
+
     Option<bool> RetryPortsOnExceptionOption { get; }
         = new("--retry-ports-on-exception")
         {
             Description = "When a port encounters an exception, it will be "
-                + "retried. The default behaviour is to ignore them after they "
+                + "retried. The default behavior is to ignore them after they "
                 + "encounter an exception.",
         };
 
-    Option<bool> RetryPortsOnLocate { get; }
+    Option<bool> RetryPortsOnLocateOption { get; }
         = new("--retry-ports-on-locate")
         {
             Description = "When a port is located, it will continue to be "
-                + "located. The default behaviour is to ignore it after it is "
+                + "located. The default behavior is to ignore it after it is "
                 + "located.",
+        };
+
+    Option<bool> OriginalOrderOfPortNamesOption { get; }
+        = new("--original-order-of-port-names")
+        {
+            Description = "Keep the original order of the port names. The "
+                + "default behavior is to sort the port names. If the "
+                + "--ports-to-test option is provided",
         };
 
     Option<bool> UseNullModemCableOption { get; }
@@ -66,80 +86,112 @@ internal class Program
 
     int Execute(string[] args)
     {
-        RootCommand rootCommand = [];
-        var executingAssembly = Assembly.GetExecutingAssembly();
-        var descriptionAttribute = executingAssembly
-            .GetCustomAttribute<AssemblyDescriptionAttribute>();
-        rootCommand.Description ??= descriptionAttribute?.Description;
-        rootCommand.SetAction(_ => _actionRan = true);
-        rootCommand.Add(PortsToIgnoreOption);
-        rootCommand.Add(RetryPortsOnExceptionOption);
-        rootCommand.Add(RetryPortsOnLocate);
-        // TODO: Add option when NullModemCable mode is implemented.
-        //rootCommand.Add(UseNullModemCableOption);
-        CustomHelpAction.UpdateWith(rootCommand);
-        ParseResult parseResult = rootCommand.Parse(args);
-        var result = parseResult.Invoke();
+        var launchedFromGui = LaunchedFromGui.Detect();
 
-        if (!_actionRan || (result != 0))
+        try
         {
-            return result;
+            RootCommand rootCommand = [];
+            var executingAssembly = Assembly.GetExecutingAssembly();
+            var descriptionAttribute = executingAssembly
+                .GetCustomAttribute<AssemblyDescriptionAttribute>();
+            rootCommand.Description ??= descriptionAttribute?.Description;
+            rootCommand.SetAction(_ => _actionRan = true);
+            rootCommand.Add(PortsToIgnoreOption);
+            rootCommand.Add(PortsToTestOption);
+            rootCommand.Add(RetryPortsOnExceptionOption);
+            rootCommand.Add(RetryPortsOnLocateOption);
+            rootCommand.Add(OriginalOrderOfPortNamesOption);
+            // TODO: Add option when NullModemCable mode is implemented.
+            //rootCommand.Add(UseNullModemCableOption);
+            CustomHelpAction.UpdateWith(rootCommand);
+            ParseResult parseResult = rootCommand.Parse(args);
+            var result = parseResult.Invoke();
+
+            if (!_actionRan || (result != 0))
+            {
+                return result;
+            }
+
+            Console.CancelKeyPress += Console_CancelKeyPress;
+
+            var portsToIgnoreOptionResult = parseResult.GetResult(
+                PortsToIgnoreOption);
+            var portsToIgnoreCsvString = portsToIgnoreOptionResult is not null
+                && !portsToIgnoreOptionResult.Implicit
+                ? parseResult.GetValue(PortsToIgnoreOption)
+                : string.Empty;
+            var portsToIgnoreArray = CsvArgumentEncoder.Decode(
+                portsToIgnoreCsvString ?? string.Empty);
+            HashSet<string> portsToIgnore = [.. portsToIgnoreArray];
+
+            var portsToTestOptionResult = parseResult.GetResult(
+                PortsToTestOption);
+            var portsToTestCsvString = portsToTestOptionResult is not null
+                && !portsToTestOptionResult.Implicit
+                ? parseResult.GetValue(PortsToTestOption)
+                : string.Empty;
+            var portsToTestArray = CsvArgumentEncoder.Decode(
+                portsToTestCsvString ?? string.Empty);
+            HashSet<string> portsToTest = [.. portsToTestArray];
+
+            var retryPortsOnExceptionOptionResult = parseResult.GetResult(
+                RetryPortsOnExceptionOption);
+            var retryPortsOnException
+                = retryPortsOnExceptionOptionResult is not null
+                && !retryPortsOnExceptionOptionResult.Implicit
+                && parseResult.GetValue(RetryPortsOnExceptionOption);
+
+            var retryPortsOnLocateOptionResult = parseResult.GetResult(
+                RetryPortsOnLocateOption);
+            var retryPortsOnLocate = retryPortsOnLocateOptionResult is not null
+                && !retryPortsOnLocateOptionResult.Implicit
+                && parseResult.GetValue(RetryPortsOnLocateOption);
+
+            var originalOrderOfPortNamesOptionResult = parseResult.GetResult(
+                OriginalOrderOfPortNamesOption);
+            var originalOrderOfPortNames
+                = originalOrderOfPortNamesOptionResult is not null
+                && !originalOrderOfPortNamesOptionResult.Implicit
+                && parseResult.GetValue(OriginalOrderOfPortNamesOption);
+
+            var useNullModemCableOptionResult = parseResult.GetResult(
+                UseNullModemCableOption);
+            // Only use the NullModemCable mode if the option is specified on the
+            // command line, otherwise use the default LoopbackAdapter mode.
+            var locatorMode = (useNullModemCableOptionResult is not null
+                && !useNullModemCableOptionResult.Implicit
+                && parseResult.GetValue(UseNullModemCableOption))
+                ? LocatorMode.NullModemCable
+                : LocatorMode.LoopbackAdapter;
+            Console.WriteLine(Format(locatorMode, indent: string.Empty));
+
+            return locatorMode switch
+            {
+                LocatorMode.LoopbackAdapter => ModeLoopbackAdapter(
+                    new LoopbackAdapterModeOptions()
+                    {
+                        PortsToIgnore = portsToIgnore,
+                        PortsToTest = portsToTest,
+                        RetryPortsOnException = retryPortsOnException,
+                        RetryPortsOnLocate = retryPortsOnLocate,
+                        OriginalOrderOfPortNames = originalOrderOfPortNames,
+                    },
+                    parseResult.InvocationConfiguration.Output,
+                    _cancellationTokenSource.Token),
+                _ => throw new NotImplementedException("The following mode is not "
+                    + "implemented: "
+                    + $"{Format(locatorMode, nameWithIndent: false)}."),
+            };
         }
-
-        Console.CancelKeyPress += Console_CancelKeyPress;
-        var portsToIgnoreOptionResult = parseResult.GetResult(PortsToIgnoreOption);
-        var portsToIgnoreCsvString
-            = portsToIgnoreOptionResult is not null
-            && !portsToIgnoreOptionResult.Implicit
-            ? parseResult.GetValue(PortsToIgnoreOption)
-            : string.Empty;
-        var portsToIgnoreArray = CsvArgumentEncoder.Decode(
-            portsToIgnoreCsvString ?? string.Empty);
-        HashSet<string> portsToIgnore = [];
-
-        foreach (var portToIgnore in portsToIgnoreArray)
+        finally
         {
-            _ = portsToIgnore.Add(portToIgnore);
+            if (launchedFromGui)
+            {
+                Console.WriteLine();
+                Console.Write("Press any key to close this window . . .");
+                _ = Console.ReadKey(true);
+            }
         }
-
-        var retryPortsOnExceptionOptionResult = parseResult.GetResult(
-            RetryPortsOnExceptionOption);
-        var retryPortsOnException
-            = retryPortsOnExceptionOptionResult is not null
-            && !retryPortsOnExceptionOptionResult.Implicit
-            && parseResult.GetValue(RetryPortsOnExceptionOption);
-
-        var retryPortsOnLocateOptionResult = parseResult.GetResult(
-            RetryPortsOnLocate);
-        var retryPortsOnLocate = retryPortsOnLocateOptionResult is not null
-            && !retryPortsOnLocateOptionResult.Implicit
-            && parseResult.GetValue(RetryPortsOnLocate);
-
-        var useNullModemCableOptionResult = parseResult.GetResult(
-            UseNullModemCableOption);
-        // Only use the NullModemCable mode if the option is specified on the
-        // command line, otherwise use the default LoopbackAdapter mode.
-        var locatorMode = (useNullModemCableOptionResult is not null
-            && !useNullModemCableOptionResult.Implicit
-            && parseResult.GetValue(UseNullModemCableOption))
-            ? LocatorMode.NullModemCable
-            : LocatorMode.LoopbackAdapter;
-
-        return locatorMode switch
-        {
-            LocatorMode.LoopbackAdapter => ModeLoopbackAdapter(
-                new LoopbackAdapterModeOptions()
-                {
-                    PortsToIgnore = portsToIgnore,
-                    RetryPortsOnException = retryPortsOnException,
-                    RetryPortsOnLocate = retryPortsOnLocate,
-                },
-                parseResult.InvocationConfiguration.Output,
-                _cancellationTokenSource.Token),
-            _ => throw new NotImplementedException("The following mode is not "
-                + "implemented: "
-                + $"{Format(locatorMode, nameWithIndent: false)}."),
-        };
     }
 
     private void Console_CancelKeyPress(object? sender,
@@ -162,8 +214,22 @@ internal class Program
         CancellationToken cancellationToken = default)
     {
         output ??= TextWriter.Null;
-        output.WriteLine("Loopback Adapter mode.");
-        HashSet<string> portsToIgnore = [.. options.PortsToIgnore];
+
+        var originalOrderOfPortNames = options.OriginalOrderOfPortNames;
+        output.WriteLine(Format(originalOrderOfPortNames));
+
+        ISet<string> portsToTest = originalOrderOfPortNames
+            ? new HashSet<string>(options.PortsToTest)
+            : new SortedSet<string>(options.PortsToTest);
+
+        if (portsToTest.Count > 0)
+        {
+            output.WriteLine(Format(portsToTest));
+        }
+
+        ISet<string> portsToIgnore = originalOrderOfPortNames
+            ? new HashSet<string>(options.PortsToIgnore)
+            : new SortedSet<string>(options.PortsToIgnore);
         output.WriteLine(Format(portsToIgnore));
 
         var retryPortsOnException = options.RetryPortsOnException;
@@ -173,6 +239,7 @@ internal class Program
         output.WriteLine(Format(retryPortsOnLocate));
 
         Queue<string> portNames = [];
+        Stopwatch stopwatch = new();
         SerialPort? serialPort = null;
         bool closeSerialPort = false;
 
@@ -188,22 +255,42 @@ internal class Program
                 {
                     output.WriteLine("Remember, press CTRL+C to exit.");
                     Thread.Sleep(1_000);
-                    var _portNames = SerialPort.GetPortNames();
-                    var numberOfPorts = _portNames.Length;
+                    var _portsToTest = portsToTest;
+
+                    if (_portsToTest.Count <= 0)
+                    {
+                        output.Write("Asking for a list of valid serial port "
+                            + "names...");
+                        var portNamesArray = SerialPort.GetPortNames();
+                        _portsToTest = originalOrderOfPortNames
+                            ? new HashSet<string>(portNamesArray)
+                            : new SortedSet<string>(portNamesArray);
+                        output.WriteLine("DONE");
+                    }
+
+                    var _actualPortsToTest = new HashSet<string>(_portsToTest);
+                    _actualPortsToTest.ExceptWith(portsToIgnore);
+                    var numberOfPorts = _actualPortsToTest.Count;
 
                     if (numberOfPorts <= 0)
                     {
-                        output.WriteLine("No ports avaiable.");
+                        output.WriteLine("No ports to test:");
+                        output.WriteLine(Format(_portsToTest,
+                            paramName: "portsToTest"));
+                        output.WriteLine(Format(portsToIgnore));
+                        output.WriteLine(Format(portNames));
 
                         return 1;
                     }
 
                     output.Write($"Preparing to test {numberOfPorts} port"
                         + (numberOfPorts != 1 ? "s" : string.Empty) + "...");
-                    portNames = new(_portNames);
+                    portNames = new(_actualPortsToTest);
                     output.WriteLine("READY");
-                    output.WriteLine(Format(portNames));
+                    output.WriteLine(Format(_portsToTest,
+                        paramName: "portsToTest"));
                     output.WriteLine(Format(portsToIgnore));
+                    output.WriteLine(Format(portNames));
                 }
 
                 cancellationToken.ThrowIfCancellationRequested();
@@ -242,7 +329,7 @@ internal class Program
 
                 output.Write("  Listening to ensure nothing read (press CTRL+C "
                     + "to exit)...");
-                var stopwatch = Stopwatch.StartNew();
+                stopwatch.Restart();
 
                 while (stopwatch.ElapsedMilliseconds < 3_000)
                 {
@@ -380,7 +467,35 @@ internal class Program
         }
     }
 
-    static string Format(IReadOnlyCollection<string> collection,
+    static string Format(ICollection<string> collection,
+        [CallerArgumentExpression(nameof(collection))] string?
+        paramName = null, string indent = "  ", bool nameWithIndent = true)
+    {
+        StringBuilder output = new();
+
+        if (nameWithIndent)
+        {
+            _ = output.Append(FormatNameWithIndent(paramName, indent));
+        }
+
+        if (collection.Count > 0)
+        {
+            output.Append($"\"{CsvArgumentEncoder.Encode(collection)}\"");
+        }
+        else
+        {
+            output.Append("<none>");
+        }
+
+        if (nameWithIndent)
+        {
+            output.Append('.');
+        }
+
+        return output.ToString();
+    }
+
+    static string Format(Queue<string> collection,
         [CallerArgumentExpression(nameof(collection))] string?
         paramName = null, string indent = "  ", bool nameWithIndent = true)
     {
@@ -492,5 +607,5 @@ internal class Program
     }
 
     static string FormatNameWithIndent(string? paramName, string indent = "  ")
-        => $"{indent}{paramName}: ";
+        => $"{indent}{paramName}: ";// Import the native Windows API function
 }
