@@ -6,7 +6,7 @@
 		<ImplicitUsings>disable</ImplicitUsings>
 		<Nullable>enable</Nullable>
 		<AssemblyName>SerialPortLocator</AssemblyName>
-		<Version>0.0.1-dev4</Version>
+		<Version>0.0.1-dev5</Version>
 		<Description>Assists in locating the physical serial port with the OS identification designator (e.g., COM port, /dev/tty…) with the use of a loopback adapter.</Description>
 		<Authors>Clinton Kopotic</Authors>
 		<Copyright>Copyright (c) Clinton Kopotic</Copyright>
@@ -16,8 +16,9 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-		<PackageReference Include="System.CommandLine" Version="2.0.9" />
-		<PackageReference Include="System.IO.Ports" Version="10.0.9" />
+		<PackageReference Include="NaturalSort.Extension" Version="4.4.1" />
+		<PackageReference Include="System.CommandLine" Version="2.0.10" />
+		<PackageReference Include="System.IO.Ports" Version="10.0.10" />
 	</ItemGroup>
 
 	<ItemGroup>

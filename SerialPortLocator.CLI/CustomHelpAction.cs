@@ -3,6 +3,7 @@
 using System.CommandLine;
 using System.CommandLine.Help;
 using System.CommandLine.Invocation;
+using System.IO;
 
 /// <summary>
 /// Used to override the default help action so that the
@@ -45,6 +46,8 @@ internal class CustomHelpAction : SynchronousCommandLineAction
     /// <inheritdoc/>
     public override int Invoke(ParseResult parseResult)
     {
+        TextWriter output = parseResult.InvocationConfiguration.Output;
+
         // The exit code for the process.
         int exitCode = 0;
 
@@ -55,11 +58,10 @@ internal class CustomHelpAction : SynchronousCommandLineAction
         {
             if (!string.IsNullOrWhiteSpace(_versionSectionTitle))
             {
-                parseResult.InvocationConfiguration.Output.WriteLine(
-                    $"{_versionSectionTitle}:");
+                output.WriteLine($"{_versionSectionTitle}:");
             }
 
-            parseResult.InvocationConfiguration.Output.Write(_indent);
+            output.Write(_indent);
 
             if (_versionOption.Action
                 is SynchronousCommandLineAction versionAction)
@@ -73,7 +75,7 @@ internal class CustomHelpAction : SynchronousCommandLineAction
                     .ConfigureAwait(false).GetAwaiter().GetResult();
             }
 
-            parseResult.InvocationConfiguration.Output.WriteLine();
+            output.WriteLine();
 
             // If the exit code is non-zero then return, as this indicates an
             // anomaly.
@@ -83,6 +85,7 @@ internal class CustomHelpAction : SynchronousCommandLineAction
             }
         }
 
+        // Display the built-in help message.
         exitCode = _helpAction.Invoke(parseResult);
 
         return exitCode;

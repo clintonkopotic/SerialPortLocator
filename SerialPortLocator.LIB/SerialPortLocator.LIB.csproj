@@ -4,15 +4,11 @@
 		<TargetFramework>net10.0</TargetFramework>
 		<ImplicitUsings>disable</ImplicitUsings>
 		<Nullable>enable</Nullable>
-		<Version>0.0.1-dev4</Version>
+		<Version>0.0.1-dev5</Version>
 		<Authors>Clinton Kopotic</Authors>
 		<Copyright>Copyright (c) Clinton Kopotic</Copyright>
 		<RepositoryUrl>https://github.com/clintonkopotic/SerialPortLocator</RepositoryUrl>
 		<RepositoryType>git</RepositoryType>
 	</PropertyGroup>
-
-	<ItemGroup>
-		<PackageReference Include="System.IO.Ports" Version="10.0.9" />
-	</ItemGroup>
 
 </Project>

@@ -10,6 +10,7 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
+using NaturalSort.Extension;
 using SerialPortLocator.LIB;
 
 internal partial class Program
@@ -70,8 +71,7 @@ internal partial class Program
         = new("--original-order-of-port-names")
         {
             Description = "Keep the original order of the port names. The "
-                + "default behavior is to sort the port names. If the "
-                + "--ports-to-test option is provided",
+                + "default behavior is to sort the port names.",
         };
 
     Option<bool> UseNullModemCableOption { get; }
@@ -84,6 +84,13 @@ internal partial class Program
                 + "locating ports.",
         };
 
+    Option<bool> ListAvailablePortNamesOption { get; }
+        = new("--list-port-names")
+        {
+            Description = "Lists the currently available port names, each on a "
+                + "separate line and in the original order.",
+        };
+
     int Execute(string[] args)
     {
         var launchedFromGui = LaunchedFromGui.Detect();
@@ -94,7 +101,13 @@ internal partial class Program
             var executingAssembly = Assembly.GetExecutingAssembly();
             var descriptionAttribute = executingAssembly
                 .GetCustomAttribute<AssemblyDescriptionAttribute>();
-            rootCommand.Description ??= descriptionAttribute?.Description;
+
+            if (descriptionAttribute is not null
+                && !string.IsNullOrWhiteSpace(descriptionAttribute.Description))
+            {
+                rootCommand.Description = descriptionAttribute.Description;
+            }
+
             rootCommand.SetAction(_ => _actionRan = true);
             rootCommand.Add(PortsToIgnoreOption);
             rootCommand.Add(PortsToTestOption);
@@ -103,6 +116,7 @@ internal partial class Program
             rootCommand.Add(OriginalOrderOfPortNamesOption);
             // TODO: Add option when NullModemCable mode is implemented.
             //rootCommand.Add(UseNullModemCableOption);
+            rootCommand.Add(ListAvailablePortNamesOption);
             CustomHelpAction.UpdateWith(rootCommand);
             ParseResult parseResult = rootCommand.Parse(args);
             var result = parseResult.Invoke();
@@ -112,47 +126,50 @@ internal partial class Program
                 return result;
             }
 
+            var listAvailablePortNamesBool = GetOptionStructValue(parseResult,
+                ListAvailablePortNamesOption);
+            var listAvailablePortNames = listAvailablePortNamesBool is not null
+                && listAvailablePortNamesBool.Value;
+
+            if (listAvailablePortNames)
+            {
+                foreach (var portName in SerialPort.GetPortNames())
+                {
+                    Console.WriteLine(portName);
+                }
+
+                return 0;
+            }
+
             Console.CancelKeyPress += Console_CancelKeyPress;
 
-            var portsToIgnoreOptionResult = parseResult.GetResult(
+            var portsToIgnoreCsvString = GetOptionClassValue(parseResult,
                 PortsToIgnoreOption);
-            var portsToIgnoreCsvString = portsToIgnoreOptionResult is not null
-                && !portsToIgnoreOptionResult.Implicit
-                ? parseResult.GetValue(PortsToIgnoreOption)
-                : string.Empty;
             var portsToIgnoreArray = CsvArgumentEncoder.Decode(
                 portsToIgnoreCsvString ?? string.Empty);
             HashSet<string> portsToIgnore = [.. portsToIgnoreArray];
 
-            var portsToTestOptionResult = parseResult.GetResult(
+            var portsToTestCsvString = GetOptionClassValue(parseResult,
                 PortsToTestOption);
-            var portsToTestCsvString = portsToTestOptionResult is not null
-                && !portsToTestOptionResult.Implicit
-                ? parseResult.GetValue(PortsToTestOption)
-                : string.Empty;
             var portsToTestArray = CsvArgumentEncoder.Decode(
                 portsToTestCsvString ?? string.Empty);
             HashSet<string> portsToTest = [.. portsToTestArray];
 
-            var retryPortsOnExceptionOptionResult = parseResult.GetResult(
+            var retryPortsOnExceptionBool = GetOptionStructValue(parseResult,
                 RetryPortsOnExceptionOption);
-            var retryPortsOnException
-                = retryPortsOnExceptionOptionResult is not null
-                && !retryPortsOnExceptionOptionResult.Implicit
-                && parseResult.GetValue(RetryPortsOnExceptionOption);
+            var retryPortsOnException = retryPortsOnExceptionBool is not null
+                && retryPortsOnExceptionBool.Value;
 
-            var retryPortsOnLocateOptionResult = parseResult.GetResult(
+            var retryPortsOnLocateBool = GetOptionStructValue(parseResult,
                 RetryPortsOnLocateOption);
-            var retryPortsOnLocate = retryPortsOnLocateOptionResult is not null
-                && !retryPortsOnLocateOptionResult.Implicit
-                && parseResult.GetValue(RetryPortsOnLocateOption);
+            var retryPortsOnLocate = retryPortsOnLocateBool is not null
+                && retryPortsOnLocateBool.Value;
 
-            var originalOrderOfPortNamesOptionResult = parseResult.GetResult(
+            var originalOrderOfPortNamesBool = GetOptionStructValue(parseResult,
                 OriginalOrderOfPortNamesOption);
             var originalOrderOfPortNames
-                = originalOrderOfPortNamesOptionResult is not null
-                && !originalOrderOfPortNamesOptionResult.Implicit
-                && parseResult.GetValue(OriginalOrderOfPortNamesOption);
+                = originalOrderOfPortNamesBool is not null
+                && originalOrderOfPortNamesBool.Value;
 
             var useNullModemCableOptionResult = parseResult.GetResult(
                 UseNullModemCableOption);
@@ -220,7 +237,8 @@ internal partial class Program
 
         ISet<string> portsToTest = originalOrderOfPortNames
             ? new HashSet<string>(options.PortsToTest)
-            : new SortedSet<string>(options.PortsToTest);
+            : new SortedSet<string>(options.PortsToTest,
+                StringComparison.OrdinalIgnoreCase.WithNaturalSort());
 
         if (portsToTest.Count > 0)
         {
@@ -229,7 +247,8 @@ internal partial class Program
 
         ISet<string> portsToIgnore = originalOrderOfPortNames
             ? new HashSet<string>(options.PortsToIgnore)
-            : new SortedSet<string>(options.PortsToIgnore);
+            : new SortedSet<string>(options.PortsToIgnore,
+                StringComparison.OrdinalIgnoreCase.WithNaturalSort());
         output.WriteLine(Format(portsToIgnore));
 
         var retryPortsOnException = options.RetryPortsOnException;
@@ -607,5 +626,51 @@ internal partial class Program
     }
 
     static string FormatNameWithIndent(string? paramName, string indent = "  ")
-        => $"{indent}{paramName}: ";// Import the native Windows API function
+        => $"{indent}{paramName}: ";
+
+    /// <summary>
+    /// Only gets the parsed value of the <paramref name="option"/> from the
+    /// <paramref name="parseResult"/> if it was specified on the command line,
+    /// otherwise <see langword="null"/> is returned. This overrides the use of
+    /// default value (see <see cref="Option.GetDefaultValue()"/>) when calling
+    /// <see cref="ParseResult.GetValue{T}(Option{T})"/>.
+    /// </summary>
+    /// <typeparam name="T">A <see langword="class"/>.</typeparam>
+    /// <param name="parseResult">The result of parsing the command line
+    /// input (see
+    /// <see cref="Command.Parse(IReadOnlyList{string},
+    /// ParserConfiguration?)"/>).</param>
+    /// <param name="option">The value to get from.</param>
+    /// <returns></returns>
+    static T? GetOptionClassValue<T>(ParseResult parseResult, Option<T> option)
+        where T : class
+    {
+        var optionResult = parseResult.GetResult(option);
+
+        return optionResult is not null && !optionResult.Implicit
+            ? parseResult.GetValue(option) : null;
+    }
+
+    /// <summary>
+    /// Only gets the parsed value of the <paramref name="option"/> from the
+    /// <paramref name="parseResult"/> if it was specified on the command line,
+    /// otherwise <see langword="null"/> is returned. This overrides the use of
+    /// default value (see <see cref="Option.GetDefaultValue()"/>) when calling
+    /// <see cref="ParseResult.GetValue{T}(Option{T})"/>.
+    /// </summary>
+    /// <typeparam name="T">A <see langword="struct"/>.</typeparam>
+    /// <param name="parseResult">The result of parsing the command line
+    /// input (see
+    /// <see cref="Command.Parse(IReadOnlyList{string},
+    /// ParserConfiguration?)"/>).</param>
+    /// <param name="option">The value to get from.</param>
+    /// <returns></returns>
+    static T? GetOptionStructValue<T>(ParseResult parseResult, Option<T> option)
+        where T : struct
+    {
+        var optionResult = parseResult.GetResult(option);
+
+        return optionResult is not null && !optionResult.Implicit
+            ? parseResult.GetValue(option) : null;
+    }
 }

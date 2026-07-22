@@ -18,6 +18,10 @@
     "SerialPortLocator.CLI Retry": {
       "commandName": "Project",
       "commandLineArgs": "--retry-ports-on-exception"
+    },
+    "SerialPortLocator.CLI List": {
+      "commandName": "Project",
+      "commandLineArgs": "--list-port-names"
     }
   }
 }
