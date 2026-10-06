@@ -235,10 +235,10 @@ internal partial class Program
         var originalOrderOfPortNames = options.OriginalOrderOfPortNames;
         output.WriteLine(Format(originalOrderOfPortNames));
 
+        var sortComparer = StringComparison.OrdinalIgnoreCase.WithNaturalSort();
         ISet<string> portsToTest = originalOrderOfPortNames
             ? new HashSet<string>(options.PortsToTest)
-            : new SortedSet<string>(options.PortsToTest,
-                StringComparison.OrdinalIgnoreCase.WithNaturalSort());
+            : new SortedSet<string>(options.PortsToTest, sortComparer);
 
         if (portsToTest.Count > 0)
         {
@@ -247,9 +247,15 @@ internal partial class Program
 
         ISet<string> portsToIgnore = originalOrderOfPortNames
             ? new HashSet<string>(options.PortsToIgnore)
-            : new SortedSet<string>(options.PortsToIgnore,
-                StringComparison.OrdinalIgnoreCase.WithNaturalSort());
+            : new SortedSet<string>(options.PortsToIgnore, sortComparer);
         output.WriteLine(Format(portsToIgnore));
+        Dictionary<string, string> errorsForTestedPorts = [];
+
+        foreach (var port in portsToIgnore)
+        {
+            errorsForTestedPorts[port] = "Commandline provided option to "
+                + "ignore.";
+        }
 
         var retryPortsOnException = options.RetryPortsOnException;
         output.WriteLine(Format(retryPortsOnException));
@@ -257,222 +263,550 @@ internal partial class Program
         var retryPortsOnLocate = options.RetryPortsOnLocate;
         output.WriteLine(Format(retryPortsOnLocate));
 
+        Dictionary<string, string> notesForTestedPorts = [];
+        var notesCount = 0;
         Queue<string> portNames = [];
         Stopwatch stopwatch = new();
         SerialPort? serialPort = null;
         bool closeSerialPort = false;
+        ISet<string> portsTested = originalOrderOfPortNames
+            ? new HashSet<string>()
+            : new SortedSet<string>(sortComparer);
 
-        while (true)
+        try
         {
-            string portName = string.Empty;
-
-            try
+            while (true)
             {
-                cancellationToken.ThrowIfCancellationRequested();
+                string portName = string.Empty;
 
-                if (portNames.Count <= 0)
+                try
                 {
-                    output.WriteLine("Remember, press CTRL+C to exit.");
-                    Thread.Sleep(1_000);
-                    var _portsToTest = portsToTest;
+                    cancellationToken.ThrowIfCancellationRequested();
 
-                    if (_portsToTest.Count <= 0)
+                    if (portNames.Count <= 0)
                     {
-                        output.Write("Asking for a list of valid serial port "
-                            + "names...");
-                        var portNamesArray = SerialPort.GetPortNames();
-                        _portsToTest = originalOrderOfPortNames
-                            ? new HashSet<string>(portNamesArray)
-                            : new SortedSet<string>(portNamesArray);
-                        output.WriteLine("DONE");
-                    }
+                        output.WriteLine("Remember, press CTRL+C to exit.");
+                        Thread.Sleep(1_000);
+                        var _portsToTest = portsToTest;
 
-                    var _actualPortsToTest = new HashSet<string>(_portsToTest);
-                    _actualPortsToTest.ExceptWith(portsToIgnore);
-                    var numberOfPorts = _actualPortsToTest.Count;
+                        if (_portsToTest.Count <= 0)
+                        {
+                            output.Write("Asking for a list of valid serial "
+                                + "port names...");
+                            var portNamesArray = SerialPort.GetPortNames();
+                            _portsToTest = originalOrderOfPortNames
+                                ? new HashSet<string>(portNamesArray)
+                                : new SortedSet<string>(portNamesArray,
+                                    sortComparer);
+                            output.WriteLine("DONE");
+                        }
 
-                    if (numberOfPorts <= 0)
-                    {
-                        output.WriteLine("No ports to test:");
+                        var _actualPortsToTest = new HashSet<string>(
+                            _portsToTest);
+                        _actualPortsToTest.ExceptWith(portsToIgnore);
+                        var numberOfPorts = _actualPortsToTest.Count;
+
+                        if (numberOfPorts <= 0)
+                        {
+                            output.WriteLine("No ports to test:");
+                            output.WriteLine(Format(_portsToTest,
+                                paramName: "portsToTest"));
+                            output.WriteLine(Format(portsToIgnore));
+                            output.WriteLine(Format(portNames));
+
+                            return 1;
+                        }
+
+                        output.Write($"Preparing to test {numberOfPorts} port"
+                            + (numberOfPorts != 1 ? "s" : string.Empty)
+                            + "...");
+                        portNames = new(_actualPortsToTest);
+                        output.WriteLine("READY");
                         output.WriteLine(Format(_portsToTest,
                             paramName: "portsToTest"));
                         output.WriteLine(Format(portsToIgnore));
                         output.WriteLine(Format(portNames));
-
-                        return 1;
-                    }
-
-                    output.Write($"Preparing to test {numberOfPorts} port"
-                        + (numberOfPorts != 1 ? "s" : string.Empty) + "...");
-                    portNames = new(_actualPortsToTest);
-                    output.WriteLine("READY");
-                    output.WriteLine(Format(_portsToTest,
-                        paramName: "portsToTest"));
-                    output.WriteLine(Format(portsToIgnore));
-                    output.WriteLine(Format(portNames));
-                }
-
-                cancellationToken.ThrowIfCancellationRequested();
-                portName = portNames.Dequeue();
-
-                if (portsToIgnore.Contains(portName))
-                {
-                    output.WriteLine($"Ignoring port: \"{portName}\".");
-
-                    continue;
-                }
-
-                output.WriteLine($"Testing port: \"{portName}\":");
-                output.Write("  Attempting to open with (19200/8-N-1)...");
-                serialPort = new SerialPort(portName, baudRate: 19_200,
-                    parity: Parity.None, dataBits: 8)
-                {
-                    Encoding = Encoding.ASCII,
-                    NewLine = "\n",
-                    ReadTimeout = 500,
-                    WriteTimeout = 500,
-                };
-
-                if (serialPort.IsOpen)
-                {
-                    output.WriteLine("Already open. Skipping.");
-
-                    continue;
-                }
-
-                cancellationToken.ThrowIfCancellationRequested();
-                serialPort.Open();
-                closeSerialPort = true;
-                output.WriteLine("DONE");
-                cancellationToken.ThrowIfCancellationRequested();
-
-                output.Write("  Listening to ensure nothing read (press CTRL+C "
-                    + "to exit)...");
-                stopwatch.Restart();
-
-                while (stopwatch.ElapsedMilliseconds < 3_000)
-                {
-                    var existing = serialPort.ReadExisting();
-
-                    if (!string.IsNullOrEmpty(existing))
-                    {
-                        output.WriteLine($"Read {existing.Length} byte"
-                            + (existing.Length != 1 ? "s" : string.Empty)
-                            + ". Skipping.");
-
-                        break;
                     }
 
                     cancellationToken.ThrowIfCancellationRequested();
-                    Thread.Sleep(100);
-                }
+                    portName = portNames.Dequeue();
 
-                stopwatch.Stop();
-                output.WriteLine("DONE");
-                cancellationToken.ThrowIfCancellationRequested();
-
-                var message = Guid.NewGuid().ToString();
-                output.Write($"  Writting message \"{message}\"...");
-                serialPort.WriteLine(message);
-                output.WriteLine("DONE");
-                cancellationToken.ThrowIfCancellationRequested();
-
-                output.Write("  Listening for read message...");
-                var success = false;
-                stopwatch.Restart();
-
-                while (stopwatch.ElapsedMilliseconds < 3_000)
-                {
-                    try
+                    if (portsToIgnore.Contains(portName))
                     {
-                        var readMessage = serialPort.ReadLine();
+                        output.WriteLine($"Ignoring port: \"{portName}\".");
 
-                        if (!string.IsNullOrEmpty(readMessage)
-                            && readMessage == message)
+                        continue;
+                    }
+
+                    output.WriteLine($"Testing port: \"{portName}\":");
+                    _ = portsTested.Add(portName);
+                    output.Write("  Attempting to open with (19200/8-N-1)...");
+                    serialPort = new SerialPort(portName, baudRate: 19_200,
+                        parity: Parity.None, dataBits: 8)
+                    {
+                        Encoding = Encoding.ASCII,
+                        NewLine = "\n",
+                        ReadTimeout = 500,
+                        WriteTimeout = 500,
+                    };
+
+                    if (serialPort.IsOpen)
+                    {
+                        output.WriteLine("Already open. Skipping.");
+
+                        continue;
+                    }
+
+                    cancellationToken.ThrowIfCancellationRequested();
+                    serialPort.Open();
+                    closeSerialPort = true;
+                    output.WriteLine("DONE");
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    output.Write("  Listening to ensure nothing read (press "
+                        + "CTRL+C to exit)...");
+                    var somethingRead = false;
+                    var escapeKeyPressed = false;
+                    stopwatch.Restart();
+
+                    while (stopwatch.ElapsedMilliseconds < 3_000)
+                    {
+                        var existing = serialPort.ReadExisting();
+
+                        if (!string.IsNullOrEmpty(existing))
                         {
-                            output.WriteLine("SUCCESS. Read message: "
-                                + $"\"{readMessage}\".");
-                            success = true;
+                            somethingRead = true;
+                            output.WriteLine($"Read {existing.Length} byte"
+                                + (existing.Length != 1 ? "s" : string.Empty)
+                                + ".");
+                            output.WriteLine("    What was read (as ASCII "
+                                + $"encoding): \"{existing}\".");
+                            output.WriteLine("    What was read (as bytes): "
+                                + $"{Encoding.ASCII.GetBytes(existing)}.");
+
+                            break;
+                        }
+
+                        cancellationToken.ThrowIfCancellationRequested();
+                        Thread.Sleep(100);
+
+                        if (KeyPressed(ConsoleKey.Escape))
+                        {
+                            escapeKeyPressed = true;
 
                             break;
                         }
                     }
-                    catch (TimeoutException) { }
+
+                    stopwatch.Stop();
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    if (somethingRead)
+                    {
+                        var continueToTest = PromptYesOrNo(
+                            prompt: "  There was communication read on this "
+                                + "port. Do you want to continue to test this "
+                                + "port? (y/[N]) ",
+                            cancellationToken: cancellationToken,
+                            output: output);
+                        cancellationToken.ThrowIfCancellationRequested();
+
+                        if (!continueToTest)
+                        {
+                            output.WriteLine("Received response \"no\". Going "
+                                + $"forward, ignoring port: \"{portName}\".");
+                            _ = portsToIgnore.Add(portName);
+                            errorsForTestedPorts[portName] = "User reqested to "
+                                + "ignore after response on port received.";
+
+                            continue;
+                        }
+
+                        output.WriteLine("Received response: \"yes\". "
+                            + "Continuing to test.");
+                    }
+                    else if (escapeKeyPressed)
+                    {
+                        output.WriteLine("ESCAPED");
+                        var ignore = PromptYesOrNo(
+                            prompt: "Would you like to ignore this port going "
+                                + "forward? (y/[N]) ",
+                            cancellationToken: cancellationToken,
+                            output: output);
+
+                        if (ignore)
+                        {
+                            _ = portsToIgnore.Add(portName);
+                            errorsForTestedPorts[portName]
+                                = "User reqested to ignore.";
+
+                            continue;
+                        }
+                    }
+                    else
+                    {
+                        output.WriteLine("DONE");
+                    }
 
                     cancellationToken.ThrowIfCancellationRequested();
-                    Thread.Sleep(100);
+
+                    var message = Guid.NewGuid().ToString();
+                    output.Write($"  Writting message \"{message}\"...");
+                    serialPort.WriteLine(message);
+                    output.WriteLine("DONE");
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    output.Write("  Listening for message...");
+                    var success = false;
+                    escapeKeyPressed = false;
+                    List<(long elapsed, string @event)> events = [];
+                    stopwatch.Restart();
+
+                    while (stopwatch.ElapsedMilliseconds < 3_000)
+                    {
+                        try
+                        {
+                            events.Add((stopwatch.ElapsedMilliseconds,
+                                "Begin serial read."));
+                            var readMessage = serialPort.ReadLine();
+                            events.Add((stopwatch.ElapsedMilliseconds,
+                                "End serial read."));
+
+                            if (!string.IsNullOrEmpty(readMessage)
+                                && readMessage == message)
+                            {
+                                events.Add((stopwatch.ElapsedMilliseconds,
+                                    "Success read message."));
+                                output.WriteLine("SUCCESS. Read message: "
+                                    + $"\"{readMessage}\".");
+                                success = true;
+
+                                break;
+                            }
+                        }
+                        catch (TimeoutException)
+                        {
+                            events.Add((stopwatch.ElapsedMilliseconds,
+                                "Serial timeout."));
+                        }
+
+                        cancellationToken.ThrowIfCancellationRequested();
+                        events.Add((stopwatch.ElapsedMilliseconds,
+                            "Begin thread sleep."));
+                        Thread.Sleep(100);
+                        events.Add((stopwatch.ElapsedMilliseconds,
+                            "Begin thread sleep."));
+
+                        if (KeyPressed(ConsoleKey.Escape))
+                        {
+                            escapeKeyPressed = true;
+
+                            break;
+                        }
+                    }
+
+                    stopwatch.Stop();
+
+                    if (escapeKeyPressed)
+                    {
+                        output.WriteLine("ESCAPED. Skipping.");
+                    }
+                    else if (!success)
+                    {
+                        output.WriteLine("FAILED. Skipping.");
+                    }
+
+                    cancellationToken.ThrowIfCancellationRequested();
+                    output.Write("  Closing...");
+                    CloseSerialPort();
+                    output.WriteLine("DONE");
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    if (escapeKeyPressed)
+                    {
+                        var ignore = PromptYesOrNo(
+                            prompt: "Would you like to ignore this port going "
+                                + "forward? (y/[N]) ",
+                            cancellationToken: cancellationToken,
+                            output: output);
+
+                        if (ignore)
+                        {
+                            _ = portsToIgnore.Add(portName);
+                            errorsForTestedPorts[portName]
+                                = "User reqested to ignore.";
+                        }
+                    }
+                    else if (success)
+                    {
+                        output.WriteLine("** Loopback Adapter found on port: "
+                            + $"\"{portName}\". **");
+
+                        if (!retryPortsOnLocate)
+                        {
+                            output.WriteLine("Going forward, ignoring port: "
+                                + $"\"{portName}\".");
+                            _ = portsToIgnore.Add(portName);
+                        }
+
+                        cancellationToken.ThrowIfCancellationRequested();
+                        var noteAlreadyAssociated = true;
+
+                        if (!notesForTestedPorts.TryGetValue(portName,
+                            out var note))
+                        {
+                            noteAlreadyAssociated = false;
+                            notesCount++;
+                            note = $"Port {notesCount}";
+                        }
+
+                        var changeNote = false;
+
+                        while (true)
+                        {
+                            cancellationToken.ThrowIfCancellationRequested();
+                            output.WriteLine("The following will be the note "
+                                + "associated with this port, "
+                                + $"\"{portName}\":");
+                            output.WriteLine($"  \"{note}\".");
+                            Console.Write("Would you like to change the note? "
+                                + "(y/[N]) ");
+                            var response = Console.ReadLine();
+
+                            if (string.IsNullOrWhiteSpace(response))
+                            {
+                                response = "n";
+                            }
+
+                            response = response.Trim().ToLower();
+
+                            if (response == "y")
+                            {
+                                changeNote = true;
+
+                                break;
+                            }
+                            else if (response == "n")
+                            {
+                                changeNote = false;
+
+                                break;
+                            }
+                            else
+                            {
+                                Console.WriteLine("Unrecognized response. "
+                                    + "Please try again.");
+                            }
+                        }
+
+                        cancellationToken.ThrowIfCancellationRequested();
+
+                        if (changeNote)
+                        {
+                            Console.Write("Enter the note to associate with "
+                                + "this port: ");
+                            note = (Console.ReadLine() ?? string.Empty).Trim();
+                            noteAlreadyAssociated = false;
+                        }
+
+                        if (!noteAlreadyAssociated)
+                        {
+                            notesForTestedPorts[portName] = note;
+                        }
+
+                        cancellationToken.ThrowIfCancellationRequested();
+                        output.WriteLine("Press ENTER to continue or CTRL+C to "
+                            + "exit.");
+
+                        while (true)
+                        {
+                            while (!Console.KeyAvailable)
+                            {
+                                cancellationToken
+                                    .ThrowIfCancellationRequested();
+                                Thread.Sleep(100);
+                            }
+
+                            cancellationToken.ThrowIfCancellationRequested();
+                            var consoleKeyInfo = Console.ReadKey(true);
+
+                            if (consoleKeyInfo.Key == ConsoleKey.Enter
+                                && consoleKeyInfo.Modifiers
+                                    == ConsoleModifiers.None)
+                            {
+                                break;
+                            }
+                        }
+                    }
                 }
-
-                stopwatch.Stop();
-
-                if (!success)
+                catch (OperationCanceledException)
                 {
-                    output.WriteLine("FAILED. Skipping.");
+                    return 0;
                 }
-
-                cancellationToken.ThrowIfCancellationRequested();
-                output.Write("  Closing...");
-                CloseSerialPort();
-                output.WriteLine("DONE");
-                cancellationToken.ThrowIfCancellationRequested();
-
-                if (success)
+                catch (Exception ex)
                 {
-                    output.WriteLine("** Loopback Adapter found on port: "
-                        + $"\"{portName}\". **");
+                    var typeAndMessage = $"Exception. {ex.GetType().FullName}: "
+                        + ex.Message;
+                    output.WriteLine(typeAndMessage);
 
-                    if (!retryPortsOnLocate)
+                    if (!retryPortsOnException
+                        && !string.IsNullOrWhiteSpace(portName))
                     {
                         output.WriteLine("Going forward, ignoring port: "
                             + $"\"{portName}\".");
                         _ = portsToIgnore.Add(portName);
-                    }
-
-                    output.WriteLine("Press ENTER to continue or CTRL+C to "
-                        + "exit.");
-
-                    while (true)
-                    {
-                        while (!Console.KeyAvailable)
-                        {
-                            cancellationToken.ThrowIfCancellationRequested();
-                            Thread.Sleep(100);
-                        }
-
-                        cancellationToken.ThrowIfCancellationRequested();
-                        var consoleKeyInfo = Console.ReadKey(true);
-
-                        if (consoleKeyInfo.Key == ConsoleKey.Enter
-                            && consoleKeyInfo.Modifiers == ConsoleModifiers.None)
-                        {
-                            break;
-                        }
+                        errorsForTestedPorts[portName] = typeAndMessage;
                     }
                 }
-            }
-            catch (OperationCanceledException)
-            {
-                return 0;
-            }
-            catch (Exception ex)
-            {
-                output.WriteLine($"Exception. {ex.GetType().FullName}: "
-                    + ex.Message);
-
-                if (!retryPortsOnException
-                    && !string.IsNullOrWhiteSpace(portName))
+                finally
                 {
-                    output.WriteLine("Going forward, ignoring port: "
-                        + $"\"{portName}\".");
-                    _ = portsToIgnore.Add(portName);
+                    CloseSerialPort();
                 }
             }
-            finally
+        }
+        finally
+        {
+            const string Asterisk = "*";
+            const string Error = "Error";
+            const string Note = "Note";
+            const string Port = "Port";
+            List<(string port, string note, bool noteIsError)> portsAndNotes
+                = [];
+            var maxPortLength = Port.Length;
+            var maxNoteLength = Note.Length;
+
+            foreach (var port in portsTested)
             {
-                CloseSerialPort();
+                if (errorsForTestedPorts.TryGetValue(port, out var error))
+                {
+                    portsAndNotes.Add((port, error, noteIsError: true));
+
+                    if (port.Length > maxPortLength)
+                    {
+                        maxPortLength = port.Length;
+                    }
+
+                    if (Asterisk.Length > maxNoteLength)
+                    {
+                        maxNoteLength = Asterisk.Length;
+                    }
+                }
+                else if (notesForTestedPorts.TryGetValue(port, out var note))
+                {
+                    portsAndNotes.Add((port, note, noteIsError: false));
+
+                    if (port.Length > maxPortLength)
+                    {
+                        maxPortLength = port.Length;
+                    }
+
+                    if (note.Length > maxNoteLength)
+                    {
+                        maxNoteLength = note.Length;
+                    }
+                }
+            }
+
+            if (portsAndNotes.Count > 0 && maxPortLength > 0)
+            {
+                Console.WriteLine();
+                var line = $"  {{0,{-maxPortLength}}} | {{1,{-maxNoteLength}}} "
+                    + $"| {{2}}";
+                Console.WriteLine(line, Port, Note, Error);
+                Console.WriteLine($"  {new string('-', maxPortLength)} +"
+                    + $" {new string('-', maxNoteLength)} + ------");
+
+                foreach (var (port, note, noteIsError) in portsAndNotes)
+                {
+                    if (noteIsError)
+                    {
+                        Console.WriteLine(line, port,
+                            PadCenterSpan(Asterisk, maxNoteLength),
+                            note);
+                    }
+                    else
+                    {
+                        Console.WriteLine(line, port, note, string.Empty);
+                    }
+                }
+
+                if (!originalOrderOfPortNames)
+                {
+                    List<(string note, string port)> notesAndPorts = [];
+                    List<(string port, string error)> portsAndErrors = [];
+
+                    foreach (var (port, note, noteIsError) in portsAndNotes)
+                    {
+                        if (noteIsError)
+                        {
+                            portsAndErrors.Add((port, note));
+                        }
+                        else
+                        {
+                            notesAndPorts.Add((note, port));
+                        }
+                    }
+
+                    if (notesAndPorts.Count > 0)
+                    {
+                        notesAndPorts.Sort((noteAndPortA, noteAndPortB) =>
+                        {
+                            var (noteA, portA) = noteAndPortA;
+                            var (noteB, portB) = noteAndPortB;
+
+                            var noteComparison = sortComparer.Compare(noteA,
+                                noteB);
+
+                            if (noteComparison != 0)
+                            {
+                                return noteComparison;
+                            }
+
+                            return sortComparer.Compare(portA, portB);
+                        });
+                        portsAndErrors.Sort((portAndErrorA, portAndErrorB) =>
+                        {
+                            var (portA, errorA) = portAndErrorA;
+                            var (portB, errorB) = portAndErrorB;
+
+                            var portComparison = sortComparer.Compare(portA,
+                                portB);
+
+                            if (portComparison != 0)
+                            {
+                                return portComparison;
+                            }
+
+                            return sortComparer.Compare(errorA, errorB);
+                        });
+
+                        Console.WriteLine();
+                        line = $"  {{0,{-maxNoteLength}}} | {{1,{-maxPortLength}}} "
+                            + $"| {{2}}";
+                        Console.WriteLine(line,
+                            PadCenterSpan(Note, maxNoteLength),
+                            PadCenterSpan(Port, maxPortLength),
+                            Error);
+                        Console.WriteLine($"  {new string('-', maxNoteLength)} +"
+                            + $" {new string('-', maxPortLength)} + ------");
+
+                        foreach (var (note, port) in notesAndPorts)
+                        {
+                            Console.WriteLine(line, note, port, string.Empty);
+                        }
+
+                        foreach (var (port, error) in portsAndErrors)
+                        {
+                            Console.WriteLine(line,
+                                PadCenterSpan(Asterisk, maxNoteLength),
+                                port, error);
+                        }
+                    }
+                }
             }
         }
 
+        // Local functions:
         // Ensure the current serial port is closed and disposed correctly.
         void CloseSerialPort()
         {
@@ -672,5 +1006,97 @@ internal partial class Program
 
         return optionResult is not null && !optionResult.Implicit
             ? parseResult.GetValue(option) : null;
+    }
+
+    static bool KeyPressed(ConsoleKey key,
+        ConsoleModifiers modifiers = ConsoleModifiers.None,
+        bool intercept = true, bool readLast = true)
+    {
+        ConsoleKeyInfo consoleKeyInfo = default;
+
+        while (Console.KeyAvailable)
+        {
+            consoleKeyInfo = Console.ReadKey(intercept: intercept);
+
+            if (!readLast)
+            {
+                return _KeyPressed();
+            }
+        }
+
+        return _KeyPressed();
+
+        bool _KeyPressed()
+        {
+            return consoleKeyInfo.Key == key
+                && consoleKeyInfo.Modifiers == modifiers;
+        }
+    }
+
+    static string PadCenterSpan(string text, int totalWidth,
+        char paddingChar = ' ')
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return new string(paddingChar, totalWidth);
+        }
+
+        if (text.Length >= totalWidth)
+        {
+            return text;
+        }
+
+        var leftPadding = (totalWidth - text.Length) / 2;
+
+        return string.Create(
+            length: totalWidth,
+            state: (text, leftPadding, paddingChar),
+            action: (span, state) =>
+            {
+                // Fill the left side with padding characters
+                span[..state.leftPadding].Fill(state.paddingChar);
+
+                // Copy the actual text content into the center
+                state.text.AsSpan().CopyTo(span[state.leftPadding..]);
+
+                // Fill the remaining right side with padding characters
+                span[(state.leftPadding + state.text.Length)..]
+                    .Fill(state.paddingChar);
+            });
+    }
+
+    static bool PromptYesOrNo(string prompt,
+        CancellationToken? cancellationToken = null, bool defaultIsNo = true,
+        TextWriter? output = null)
+    {
+        cancellationToken ??= CancellationToken.None;
+        output ??= Console.Out;
+
+        while (true)
+        {
+            cancellationToken?.ThrowIfCancellationRequested();
+            output.Write(prompt);
+            var response = Console.ReadLine();
+
+            if (string.IsNullOrWhiteSpace(response))
+            {
+                response = defaultIsNo ? "n" : "y";
+            }
+
+            response = response.Trim().ToLower();
+
+            if (response == "y" || response == "yes")
+            {
+                return true;
+            }
+            else if (response == "n" || response == "no")
+            {
+                return false;
+            }
+            else
+            {
+                output.WriteLine("Unrecognized response. Please try again.");
+            }
+        }
     }
 }
