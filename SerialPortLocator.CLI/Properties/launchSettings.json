@@ -1,0 +1,27 @@
+{
+  "profiles": {
+    "SerialPortLocator.CLI": {
+      "commandName": "Project"
+    },
+    "SerialPortLocator.CLI Help": {
+      "commandName": "Project",
+      "commandLineArgs": "--help"
+    },
+    "SerialPortLocator.CLI Version": {
+      "commandName": "Project",
+      "commandLineArgs": "--version"
+    },
+    "SerialPortLocator.CLI Ignore": {
+      "commandName": "Project",
+      "commandLineArgs": "--ports-to-ignore \"COM4,COM5\""
+    },
+    "SerialPortLocator.CLI Retry": {
+      "commandName": "Project",
+      "commandLineArgs": "--retry-ports-on-exception"
+    },
+    "SerialPortLocator.CLI List": {
+      "commandName": "Project",
+      "commandLineArgs": "--list-port-names"
+    }
+  }
+}
