@@ -1,5 +1,6 @@
 ﻿namespace SerialPortLocator.CLI;
 
+using System;
 using System.CommandLine;
 using System.CommandLine.Help;
 using System.CommandLine.Invocation;
@@ -28,6 +29,8 @@ internal class CustomHelpAction : SynchronousCommandLineAction
 
     private readonly string _indent;
 
+    private readonly Func<TextWriter, string, bool, int>? _packageFunc;
+
     private readonly VersionOption? _versionOption;
 
     private readonly string _versionSectionTitle;
@@ -35,11 +38,13 @@ internal class CustomHelpAction : SynchronousCommandLineAction
     private CustomHelpAction(HelpAction helpAction,
         VersionOption? versionOption = null,
         string versionSectionTitle = DefaultVersionSectionTitle,
+        Func<TextWriter, string, bool, int>? packageFunc = null,
         string indent = DefaultIndent)
     {
         _helpAction = helpAction;
         _versionOption = versionOption;
         _versionSectionTitle = versionSectionTitle;
+        _packageFunc = packageFunc;
         _indent = indent;
     }
 
@@ -88,7 +93,14 @@ internal class CustomHelpAction : SynchronousCommandLineAction
         // Display the built-in help message.
         exitCode = _helpAction.Invoke(parseResult);
 
-        return exitCode;
+        // If the exit code is non-zero then return, as this indicates an
+        // anomaly, or if there is not a provided package function.
+        if (exitCode != 0 || _packageFunc is null)
+        {
+            return exitCode;
+        }
+
+        return _packageFunc.Invoke(output, _indent, true);
     }
 
     /// <summary>
@@ -104,6 +116,7 @@ internal class CustomHelpAction : SynchronousCommandLineAction
     /// <see cref="VersionOption.Action"/> is displayed.</param>
     public static void UpdateWith(RootCommand rootCommand,
         string versionSectionTitle = DefaultVersionSectionTitle,
+        Func<TextWriter, string, bool, int>? packageFunc = null,
         string indent = DefaultIndent)
     {
         HelpOption? helpOption = null;
@@ -132,8 +145,12 @@ internal class CustomHelpAction : SynchronousCommandLineAction
         if (helpOption is not null
             && helpOption.Action is HelpAction helpAction)
         {
-            helpOption.Action = new CustomHelpAction(helpAction,
-                versionOption, versionSectionTitle, indent);
+            helpOption.Action = new CustomHelpAction(
+                helpAction: helpAction,
+                versionOption: versionOption,
+                versionSectionTitle: versionSectionTitle,
+                packageFunc: packageFunc,
+                indent: indent);
         }
     }
 }
