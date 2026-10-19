@@ -6,8 +6,10 @@ using System.CommandLine;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Ports;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using NaturalSort.Extension;
@@ -117,7 +119,8 @@ internal partial class Program
             // TODO: Add option when NullModemCable mode is implemented.
             //rootCommand.Add(UseNullModemCableOption);
             rootCommand.Add(ListAvailablePortNamesOption);
-            CustomHelpAction.UpdateWith(rootCommand);
+            CustomHelpAction.UpdateWith(rootCommand,
+                packageFunc: ListPackages);
             ParseResult parseResult = rootCommand.Parse(args);
             var result = parseResult.Invoke();
 
@@ -142,6 +145,14 @@ internal partial class Program
             }
 
             Console.CancelKeyPress += Console_CancelKeyPress;
+
+            var output = parseResult.InvocationConfiguration.Output;
+            output.WriteLine("{0}: {1}",
+                arg0: CustomHelpAction.DefaultVersionSectionTitle,
+                arg1: GetExecutableVersion());
+            output.WriteLine("Runtime: {0}",
+                arg0: RuntimeInformation.FrameworkDescription);
+            _ = ListPackages(output);
 
             var portsToIgnoreCsvString = GetOptionClassValue(parseResult,
                 PortsToIgnoreOption);
@@ -180,12 +191,12 @@ internal partial class Program
                 && parseResult.GetValue(UseNullModemCableOption))
                 ? LocatorMode.NullModemCable
                 : LocatorMode.LoopbackAdapter;
-            Console.WriteLine(Format(locatorMode, indent: string.Empty));
+            output.WriteLine(Format(locatorMode, indent: string.Empty));
 
             return locatorMode switch
             {
                 LocatorMode.LoopbackAdapter => ModeLoopbackAdapter(
-                    new LoopbackAdapterModeOptions()
+                    options: new LoopbackAdapterModeOptions()
                     {
                         PortsToIgnore = portsToIgnore,
                         PortsToTest = portsToTest,
@@ -193,10 +204,10 @@ internal partial class Program
                         RetryPortsOnLocate = retryPortsOnLocate,
                         OriginalOrderOfPortNames = originalOrderOfPortNames,
                     },
-                    parseResult.InvocationConfiguration.Output,
-                    _cancellationTokenSource.Token),
-                _ => throw new NotImplementedException("The following mode is not "
-                    + "implemented: "
+                    output: output,
+                    cancellationToken: _cancellationTokenSource.Token),
+                _ => throw new NotImplementedException("The following mode is "
+                    + "not implemented: "
                     + $"{Format(locatorMode, nameWithIndent: false)}."),
             };
         }
@@ -378,11 +389,12 @@ internal partial class Program
                             somethingRead = true;
                             output.WriteLine($"Read {existing.Length} byte"
                                 + (existing.Length != 1 ? "s" : string.Empty)
-                                + ".");
-                            output.WriteLine("    What was read (as ASCII "
-                                + $"encoding): \"{existing}\".");
-                            output.WriteLine("    What was read (as bytes): "
-                                + $"{Encoding.ASCII.GetBytes(existing)}.");
+                                + ':');
+                            output.WriteLine("    As ASCII encoded: "
+                                + $"\"{existing}\".");
+                            output.WriteLine("    As hexadecimal bytes: "
+                                + Format(Encoding.ASCII.GetBytes(existing))
+                                + '.');
 
                             break;
                         }
@@ -848,6 +860,32 @@ internal partial class Program
         return output.ToString();
     }
 
+    static string Format(IEnumerable<byte> bytes, string separator = " ",
+        bool lowercaseHex = false)
+        => string.Join(separator, bytes.Select(b => b.ToString(
+            lowercaseHex ? "x2" : "X2")));
+
+    static string Format(object @object,
+        [CallerArgumentExpression(nameof(@object))] string? paramName = null,
+        string indent = "  ", bool nameWithIndent = true)
+    {
+        StringBuilder output = new();
+
+        if (nameWithIndent)
+        {
+            _ = output.Append(FormatNameWithIndent(paramName, indent));
+        }
+
+        _ = output.Append(@object);
+
+        if (nameWithIndent)
+        {
+            _ = output.Append('.');
+        }
+
+        return output.ToString();
+    }
+
     static string Format(Queue<string> collection,
         [CallerArgumentExpression(nameof(collection))] string?
         paramName = null, string indent = "  ", bool nameWithIndent = true)
@@ -871,27 +909,6 @@ internal partial class Program
         if (nameWithIndent)
         {
             output.Append('.');
-        }
-
-        return output.ToString();
-    }
-
-    static string Format(object @object,
-        [CallerArgumentExpression(nameof(@object))] string? paramName = null,
-        string indent = "  ", bool nameWithIndent = true)
-    {
-        StringBuilder output = new();
-
-        if (nameWithIndent)
-        {
-            _ = output.Append(FormatNameWithIndent(paramName, indent));
-        }
-
-        _ = output.Append(@object);
-
-        if (nameWithIndent)
-        {
-            _ = output.Append('.');
         }
 
         return output.ToString();
@@ -963,6 +980,31 @@ internal partial class Program
         => $"{indent}{paramName}: ";
 
     /// <summary>
+    /// Adapted from <see cref="VersionOption"/>.
+    /// </summary>
+    /// <returns>The <see cref="Assembly"/> from
+    /// <see cref="Assembly.GetEntryAssembly()"/> or
+    /// <see cref="Assembly.GetExecutingAssembly()"/> if called from unmanged
+    /// code then the .</returns>
+    static Assembly GetExecutableAssembly()
+        => Assembly.GetEntryAssembly() ?? Assembly.GetExecutingAssembly();
+
+    /// <summary>
+    /// Adapted from <see cref="VersionOption"/>.
+    /// </summary>
+    /// <returns>The version of the <see cref="Assembly"/>.</returns>
+    static string GetExecutableVersion()
+    {
+        var assembly = GetExecutableAssembly();
+        var customAttribute = assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>();
+
+        return customAttribute is not null
+            ? customAttribute.InformationalVersion
+            : assembly.GetName().Version?.ToString() ?? string.Empty;
+    }
+
+    /// <summary>
     /// Only gets the parsed value of the <paramref name="option"/> from the
     /// <paramref name="parseResult"/> if it was specified on the command line,
     /// otherwise <see langword="null"/> is returned. This overrides the use of
@@ -1031,6 +1073,87 @@ internal partial class Program
             return consoleKeyInfo.Key == key
                 && consoleKeyInfo.Modifiers == modifiers;
         }
+    }
+
+    static int ListPackages(TextWriter output, string indent = "  ",
+        bool extraLineSpacing = false)
+    {
+        string[] nugets =
+            [
+                "System.CommandLine",
+                "System.IO.Ports",
+                "NaturalSort.Extension",
+            ];
+
+        var assembly = GetExecutableAssembly();
+        var assemblyName = assembly.GetName().Name ?? string.Empty;
+        var assemblyNameStartsWith = assemblyName.Split('.').First();
+
+        var maxInternalsNameLength = 0;
+        var maxPackagesNameLength = 0;
+        SortedDictionary<string, string> internals = [];
+        SortedDictionary<string, string> packages = [];
+
+        foreach (var referencedAssembly in assembly.GetReferencedAssemblies())
+        {
+            var name = referencedAssembly.Name;
+            var version = referencedAssembly.Version?.ToString();
+
+            if (string.IsNullOrEmpty(name) || version is null)
+            {
+                continue;
+            }
+            else if (!string.IsNullOrEmpty(assemblyNameStartsWith)
+                && name.StartsWith(assemblyNameStartsWith))
+            {
+                internals[name] = version;
+
+                if (name.Length > maxInternalsNameLength)
+                {
+                    maxInternalsNameLength = name.Length;
+                }
+            }
+            else if (nugets.Contains(name))
+            {
+                packages[name] = version;
+
+                if (name.Length > maxPackagesNameLength)
+                {
+                    maxPackagesNameLength = name.Length;
+                }
+            }
+        }
+
+        if (packages.Count > 0)
+        {
+            output.WriteLine("NuGet Packages:");
+
+            foreach (var (name, version) in packages)
+            {
+                string dotLeader = new(c: '.',
+                    count: maxPackagesNameLength - name.Length);
+                output.WriteLine($"{indent}{name} .{dotLeader}. v{version}");
+            }
+
+            if (extraLineSpacing && internals.Count > 0)
+            {
+                output.WriteLine();
+            }
+        }
+
+        if (internals.Count > 0)
+        {
+            output.WriteLine("Internal Libraries:");
+
+            foreach (var (name, version) in internals)
+            {
+                string dotLeader = new(c: '.',
+                    count: maxInternalsNameLength - name.Length);
+                output.WriteLine($"{indent}{name} .{dotLeader}. v{version}");
+            }
+        }
+
+        return 0;
     }
 
     static string PadCenterSpan(string text, int totalWidth,
