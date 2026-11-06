@@ -12,7 +12,6 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
-using NaturalSort.Extension;
 using SerialPortLocator.LIB;
 
 internal partial class Program
@@ -191,7 +190,9 @@ internal partial class Program
                 && parseResult.GetValue(UseNullModemCableOption))
                 ? LocatorMode.NullModemCable
                 : LocatorMode.LoopbackAdapter;
-            output.WriteLine(Format(locatorMode, indent: string.Empty));
+            FormatHelper formatHelper = new();
+            output.WriteLine(formatHelper.Format(locatorMode,
+                indent: string.Empty));
 
             return locatorMode switch
             {
@@ -203,12 +204,13 @@ internal partial class Program
                         RetryPortsOnException = retryPortsOnException,
                         RetryPortsOnLocate = retryPortsOnLocate,
                         OriginalOrderOfPortNames = originalOrderOfPortNames,
+                        StatusWriter = output,
                     },
-                    output: output,
                     cancellationToken: _cancellationTokenSource.Token),
                 _ => throw new NotImplementedException("The following mode is "
                     + "not implemented: "
-                    + $"{Format(locatorMode, nameWithIndent: false)}."),
+                    + formatHelper.Format(locatorMode, nameWithIndent: false)
+                    + '.'),
             };
         }
         finally
@@ -238,15 +240,14 @@ internal partial class Program
     }
 
     static int ModeLoopbackAdapter(LoopbackAdapterModeOptions options,
-        TextWriter? output = null,
         CancellationToken cancellationToken = default)
     {
-        output ??= TextWriter.Null;
+        var output = options.StatusWriter;
 
         var originalOrderOfPortNames = options.OriginalOrderOfPortNames;
         output.WriteLine(Format(originalOrderOfPortNames));
 
-        var sortComparer = StringComparison.OrdinalIgnoreCase.WithNaturalSort();
+        var sortComparer = options.StringComparerForSort;
         ISet<string> portsToTest = originalOrderOfPortNames
             ? new HashSet<string>(options.PortsToTest)
             : new SortedSet<string>(options.PortsToTest, sortComparer);
@@ -292,7 +293,7 @@ internal partial class Program
 
                 try
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
+                    ThrowIfCancellationRequested();
 
                     if (portNames.Count <= 0)
                     {
@@ -339,7 +340,7 @@ internal partial class Program
                         output.WriteLine(Format(portNames));
                     }
 
-                    cancellationToken.ThrowIfCancellationRequested();
+                    ThrowIfCancellationRequested();
                     portName = portNames.Dequeue();
 
                     if (portsToIgnore.Contains(portName))
@@ -368,11 +369,11 @@ internal partial class Program
                         continue;
                     }
 
-                    cancellationToken.ThrowIfCancellationRequested();
+                    ThrowIfCancellationRequested();
                     serialPort.Open();
                     closeSerialPort = true;
                     output.WriteLine("DONE");
-                    cancellationToken.ThrowIfCancellationRequested();
+                    ThrowIfCancellationRequested();
 
                     output.Write("  Listening to ensure nothing read (press "
                         + "CTRL+C to exit)...");
@@ -399,7 +400,7 @@ internal partial class Program
                             break;
                         }
 
-                        cancellationToken.ThrowIfCancellationRequested();
+                        ThrowIfCancellationRequested();
                         Thread.Sleep(100);
 
                         if (KeyPressed(ConsoleKey.Escape))
@@ -411,7 +412,7 @@ internal partial class Program
                     }
 
                     stopwatch.Stop();
-                    cancellationToken.ThrowIfCancellationRequested();
+                    ThrowIfCancellationRequested();
 
                     if (somethingRead)
                     {
@@ -421,7 +422,7 @@ internal partial class Program
                                 + "port? (y/[N]) ",
                             cancellationToken: cancellationToken,
                             output: output);
-                        cancellationToken.ThrowIfCancellationRequested();
+                        ThrowIfCancellationRequested();
 
                         if (!continueToTest)
                         {
@@ -460,13 +461,13 @@ internal partial class Program
                         output.WriteLine("DONE");
                     }
 
-                    cancellationToken.ThrowIfCancellationRequested();
+                    ThrowIfCancellationRequested();
 
                     var message = Guid.NewGuid().ToString();
                     output.Write($"  Writting message \"{message}\"...");
                     serialPort.WriteLine(message);
                     output.WriteLine("DONE");
-                    cancellationToken.ThrowIfCancellationRequested();
+                    ThrowIfCancellationRequested();
 
                     output.Write("  Listening for message...");
                     var success = false;
@@ -502,7 +503,7 @@ internal partial class Program
                                 "Serial timeout."));
                         }
 
-                        cancellationToken.ThrowIfCancellationRequested();
+                        ThrowIfCancellationRequested();
                         events.Add((stopwatch.ElapsedMilliseconds,
                             "Begin thread sleep."));
                         Thread.Sleep(100);
@@ -528,11 +529,11 @@ internal partial class Program
                         output.WriteLine("FAILED. Skipping.");
                     }
 
-                    cancellationToken.ThrowIfCancellationRequested();
+                    ThrowIfCancellationRequested();
                     output.Write("  Closing...");
                     CloseSerialPort();
                     output.WriteLine("DONE");
-                    cancellationToken.ThrowIfCancellationRequested();
+                    ThrowIfCancellationRequested();
 
                     if (escapeKeyPressed)
                     {
@@ -561,7 +562,7 @@ internal partial class Program
                             _ = portsToIgnore.Add(portName);
                         }
 
-                        cancellationToken.ThrowIfCancellationRequested();
+                        ThrowIfCancellationRequested();
                         var noteAlreadyAssociated = true;
 
                         if (!notesForTestedPorts.TryGetValue(portName,
@@ -576,7 +577,7 @@ internal partial class Program
 
                         while (true)
                         {
-                            cancellationToken.ThrowIfCancellationRequested();
+                            ThrowIfCancellationRequested();
                             output.WriteLine("The following will be the note "
                                 + "associated with this port, "
                                 + $"\"{portName}\":");
@@ -626,7 +627,7 @@ internal partial class Program
                             notesForTestedPorts[portName] = note;
                         }
 
-                        cancellationToken.ThrowIfCancellationRequested();
+                        ThrowIfCancellationRequested();
                         output.WriteLine("Press ENTER to continue or CTRL+C to "
                             + "exit.");
 
@@ -634,12 +635,11 @@ internal partial class Program
                         {
                             while (!Console.KeyAvailable)
                             {
-                                cancellationToken
-                                    .ThrowIfCancellationRequested();
+                                ThrowIfCancellationRequested();
                                 Thread.Sleep(100);
                             }
 
-                            cancellationToken.ThrowIfCancellationRequested();
+                            ThrowIfCancellationRequested();
                             var consoleKeyInfo = Console.ReadKey(true);
 
                             if (consoleKeyInfo.Key == ConsoleKey.Enter
@@ -830,154 +830,17 @@ internal partial class Program
                 closeSerialPort = false;
             }
         }
+
+        string Format(object? @object,
+            [CallerArgumentExpression(nameof(@object))]
+                string? paramName = null,
+            string indent = "  ", bool nameWithIndent = true)
+            => options.FormatHelper.Format(@object, paramName, indent,
+                nameWithIndent);
+
+        void ThrowIfCancellationRequested()
+            => cancellationToken.ThrowIfCancellationRequested();
     }
-
-    static string Format(ICollection<string> collection,
-        [CallerArgumentExpression(nameof(collection))] string?
-        paramName = null, string indent = "  ", bool nameWithIndent = true)
-    {
-        StringBuilder output = new();
-
-        if (nameWithIndent)
-        {
-            _ = output.Append(FormatNameWithIndent(paramName, indent));
-        }
-
-        if (collection.Count > 0)
-        {
-            output.Append($"\"{CsvArgumentEncoder.Encode(collection)}\"");
-        }
-        else
-        {
-            output.Append("<none>");
-        }
-
-        if (nameWithIndent)
-        {
-            output.Append('.');
-        }
-
-        return output.ToString();
-    }
-
-    static string Format(IEnumerable<byte> bytes, string separator = " ",
-        bool lowercaseHex = false)
-        => string.Join(separator, bytes.Select(b => b.ToString(
-            lowercaseHex ? "x2" : "X2")));
-
-    static string Format(object @object,
-        [CallerArgumentExpression(nameof(@object))] string? paramName = null,
-        string indent = "  ", bool nameWithIndent = true)
-    {
-        StringBuilder output = new();
-
-        if (nameWithIndent)
-        {
-            _ = output.Append(FormatNameWithIndent(paramName, indent));
-        }
-
-        _ = output.Append(@object);
-
-        if (nameWithIndent)
-        {
-            _ = output.Append('.');
-        }
-
-        return output.ToString();
-    }
-
-    static string Format(Queue<string> collection,
-        [CallerArgumentExpression(nameof(collection))] string?
-        paramName = null, string indent = "  ", bool nameWithIndent = true)
-    {
-        StringBuilder output = new();
-
-        if (nameWithIndent)
-        {
-            _ = output.Append(FormatNameWithIndent(paramName, indent));
-        }
-
-        if (collection.Count > 0)
-        {
-            output.Append($"\"{CsvArgumentEncoder.Encode(collection)}\"");
-        }
-        else
-        {
-            output.Append("<none>");
-        }
-
-        if (nameWithIndent)
-        {
-            output.Append('.');
-        }
-
-        return output.ToString();
-    }
-
-    static string Format<TEnum>(TEnum @enum,
-        [CallerArgumentExpression(nameof(@enum))] string?
-        paramName = null, string indent = "  ", bool nameWithIndent = true)
-        where TEnum : struct, Enum
-    {
-        StringBuilder output = new();
-
-        if (nameWithIndent)
-        {
-            _ = output.Append(FormatNameWithIndent(paramName, indent));
-        }
-
-        _ = output.Append(Enum.IsDefined(@enum) ? @enum.ToString()
-            : "<undefined>");
-
-        var underlyingType = Enum.GetUnderlyingType(typeof(TEnum));
-        object? underlyingValue = null;
-
-        if (underlyingType == typeof(int))
-        {
-            underlyingValue = (int)(object)@enum;
-        }
-        else if (underlyingType == typeof(byte))
-        {
-            underlyingValue = (byte)(object)@enum;
-        }
-        else if (underlyingType == typeof(sbyte))
-        {
-            underlyingValue = (sbyte)(object)@enum;
-        }
-        else if (underlyingType == typeof(short))
-        {
-            underlyingValue = (short)(object)@enum;
-        }
-        else if (underlyingType == typeof(ushort))
-        {
-            underlyingValue = (ushort)(object)@enum;
-        }
-        else if (underlyingType == typeof(uint))
-        {
-            underlyingValue = (uint)(object)@enum;
-        }
-        else if (underlyingType == typeof(long))
-        {
-            underlyingValue = (long)(object)@enum;
-        }
-        else if (underlyingType == typeof(ulong))
-        {
-            underlyingValue = (ulong)(object)@enum;
-        }
-
-        _ = output.AppendFormat(" ({0})", underlyingValue is not null
-            ? underlyingValue.ToString() : "null");
-
-        if (nameWithIndent)
-        {
-            output.Append('.');
-        }
-
-        return output.ToString();
-    }
-
-    static string FormatNameWithIndent(string? paramName, string indent = "  ")
-        => $"{indent}{paramName}: ";
 
     /// <summary>
     /// Adapted from <see cref="VersionOption"/>.
@@ -1093,12 +956,24 @@ internal partial class Program
         var maxPackagesNameLength = 0;
         SortedDictionary<string, string> internals = [];
         SortedDictionary<string, string> packages = [];
+        Queue<AssemblyName> referencedAssemblies = new(
+            collection: assembly.GetReferencedAssemblies());
 
-        foreach (var referencedAssembly in assembly.GetReferencedAssemblies())
+        while (referencedAssemblies.Count > 0)
         {
-            var name = referencedAssembly.Name;
-            var version = referencedAssembly.Version?.ToString();
+            var referencedAssemblyName = referencedAssemblies.Dequeue();
+            var name = referencedAssemblyName.Name;
+            var version = referencedAssemblyName.Version?.ToString();
+            var referencedAssembly = Assembly.Load(referencedAssemblyName);
+            var assemblyInformationalVersionAttribute = referencedAssembly
+                .GetCustomAttribute<AssemblyInformationalVersionAttribute>();
 
+            if (assemblyInformationalVersionAttribute is not null)
+            {
+                version = assemblyInformationalVersionAttribute
+                    .InformationalVersion;
+            }
+            
             if (string.IsNullOrEmpty(name) || version is null)
             {
                 continue;
@@ -1112,6 +987,17 @@ internal partial class Program
                 {
                     maxInternalsNameLength = name.Length;
                 }
+
+                try
+                {
+                    foreach (var internalReferencedAssembly
+                        in referencedAssembly.GetReferencedAssemblies())
+                    {
+                        referencedAssemblies.Enqueue(internalReferencedAssembly);
+                    }
+                }
+                catch
+                { }
             }
             else if (nugets.Contains(name))
             {

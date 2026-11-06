@@ -2,7 +2,6 @@
 
 using System;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
-using SerialPortLocator.LIB;
 
 [TestClass]
 public sealed class CsvArgumentEncoderTests
