@@ -352,9 +352,15 @@ internal partial class Program
 
                     output.WriteLine($"Testing port: \"{portName}\":");
                     _ = portsTested.Add(portName);
-                    output.Write("  Attempting to open with (19200/8-N-1)...");
-                    serialPort = new SerialPort(portName, baudRate: 19_200,
-                        parity: Parity.None, dataBits: 8)
+                    var settings = SerialPortHelper.DefaultSettings;
+                    output.Write($"  Attempting to open with ({settings})...");
+                    var parsedSettings = SerialPortHelper.ParseSettings(
+                        settings);
+                    serialPort = new SerialPort(portName,
+                        baudRate: parsedSettings.BaudRate,
+                        dataBits: parsedSettings.DataBits,
+                        parity: parsedSettings.Parity,
+                        stopBits: parsedSettings.StopBits)
                     {
                         Encoding = Encoding.ASCII,
                         NewLine = "\n",
@@ -362,16 +368,33 @@ internal partial class Program
                         WriteTimeout = 500,
                     };
 
-                    if (serialPort.IsOpen)
+                    using LoopbackAdapterModePortTest test = new(serialPort,
+                        cancellationToken);
+                    var result = test.Open().GetAwaiter().GetResult();
+
+                    if (result is LoopbackAdapterModePortTestResult.Failure
+                        openFailure)
                     {
+                        if (openFailure.Exception is not null)
+                        {
+                            throw openFailure.Exception;
+                        }
+
                         output.WriteLine("Already open. Skipping.");
 
                         continue;
                     }
 
-                    ThrowIfCancellationRequested();
-                    serialPort.Open();
-                    closeSerialPort = true;
+                    //if (serialPort.IsOpen)
+                    //{
+                    //    output.WriteLine("Already open. Skipping.");
+
+                    //    continue;
+                    //}
+
+                    //ThrowIfCancellationRequested();
+                    //serialPort.Open();
+                    //closeSerialPort = true;
                     output.WriteLine("DONE");
                     ThrowIfCancellationRequested();
 
@@ -379,39 +402,71 @@ internal partial class Program
                         + "CTRL+C to exit)...");
                     var somethingRead = false;
                     var escapeKeyPressed = false;
-                    stopwatch.Restart();
 
-                    while (stopwatch.ElapsedMilliseconds < 3_000)
+                    result = test.PreRead().GetAwaiter().GetResult();
+
+                    if (result is LoopbackAdapterModePortTestResult.Failure
+                        preReadFailure)
                     {
-                        var existing = serialPort.ReadExisting();
+                        if (preReadFailure.Exception is not null)
+                        {
+                            throw preReadFailure.Exception;
+                        }
+                    }
+                    else if (result is LoopbackAdapterModePortTestResult.Success
+                        preReadSuccess)
+                    {
+                        var preReadData = preReadSuccess.Data;
 
-                        if (!string.IsNullOrEmpty(existing))
+                        if (!string.IsNullOrEmpty(preReadData))
                         {
                             somethingRead = true;
-                            output.WriteLine($"Read {existing.Length} byte"
-                                + (existing.Length != 1 ? "s" : string.Empty)
+                            output.WriteLine($"Read {preReadData.Length} byte"
+                                + (preReadData.Length != 1 ? "s" : string.Empty)
                                 + ':');
                             output.WriteLine("    As ASCII encoded: "
-                                + $"\"{existing}\".");
+                                + $"\"{preReadData}\".");
                             output.WriteLine("    As hexadecimal bytes: "
-                                + Format(Encoding.ASCII.GetBytes(existing))
+                                + Format(Encoding.ASCII.GetBytes(preReadData))
                                 + '.');
-
-                            break;
-                        }
-
-                        ThrowIfCancellationRequested();
-                        Thread.Sleep(100);
-
-                        if (KeyPressed(ConsoleKey.Escape))
-                        {
-                            escapeKeyPressed = true;
-
-                            break;
                         }
                     }
 
-                    stopwatch.Stop();
+                    escapeKeyPressed = KeyPressed(ConsoleKey.Escape);
+
+                    //stopwatch.Restart();
+
+                    //while (stopwatch.ElapsedMilliseconds < 3_000)
+                    //{
+                    //    var existing = serialPort.ReadExisting();
+
+                    //    if (!string.IsNullOrEmpty(existing))
+                    //    {
+                    //        somethingRead = true;
+                    //        output.WriteLine($"Read {existing.Length} byte"
+                    //            + (existing.Length != 1 ? "s" : string.Empty)
+                    //            + ':');
+                    //        output.WriteLine("    As ASCII encoded: "
+                    //            + $"\"{existing}\".");
+                    //        output.WriteLine("    As hexadecimal bytes: "
+                    //            + Format(Encoding.ASCII.GetBytes(existing))
+                    //            + '.');
+
+                    //        break;
+                    //    }
+
+                    //    ThrowIfCancellationRequested();
+                    //    Thread.Sleep(100);
+
+                    //    if (KeyPressed(ConsoleKey.Escape))
+                    //    {
+                    //        escapeKeyPressed = true;
+
+                    //        break;
+                    //    }
+                    //}
+
+                    //stopwatch.Stop();
                     ThrowIfCancellationRequested();
 
                     if (somethingRead)
