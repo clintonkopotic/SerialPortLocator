@@ -12,6 +12,8 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
+using System.Threading.Channels;
+using System.Threading.Tasks;
 using SerialPortLocator.LIB;
 
 internal partial class Program
@@ -278,9 +280,7 @@ internal partial class Program
         Dictionary<string, string> notesForTestedPorts = [];
         var notesCount = 0;
         Queue<string> portNames = [];
-        Stopwatch stopwatch = new();
         SerialPort? serialPort = null;
-        bool closeSerialPort = false;
         ISet<string> portsTested = originalOrderOfPortNames
             ? new HashSet<string>()
             : new SortedSet<string>(sortComparer);
@@ -368,9 +368,9 @@ internal partial class Program
                         WriteTimeout = 500,
                     };
 
-                    using LoopbackAdapterModePortTest test = new(serialPort,
-                        cancellationToken);
-                    var result = test.Open().GetAwaiter().GetResult();
+                    using LoopbackAdapterModePortTest test = new(serialPort);
+                    var result = test.OpenAsync(cancellationToken).GetAwaiter()
+                        .GetResult();
 
                     if (result is LoopbackAdapterModePortTestResult.Failure
                         openFailure)
@@ -385,16 +385,6 @@ internal partial class Program
                         continue;
                     }
 
-                    //if (serialPort.IsOpen)
-                    //{
-                    //    output.WriteLine("Already open. Skipping.");
-
-                    //    continue;
-                    //}
-
-                    //ThrowIfCancellationRequested();
-                    //serialPort.Open();
-                    //closeSerialPort = true;
                     output.WriteLine("DONE");
                     ThrowIfCancellationRequested();
 
@@ -402,8 +392,21 @@ internal partial class Program
                         + "CTRL+C to exit)...");
                     var somethingRead = false;
                     var escapeKeyPressed = false;
-
-                    result = test.PreRead().GetAwaiter().GetResult();
+                    using var preReadCancellationTokenSource
+                        = CancellationTokenSource.CreateLinkedTokenSource(
+                            cancellationToken);
+                    var preReadCancellationToken
+                        = preReadCancellationTokenSource.Token;
+                    result= Task
+                        .WhenAny(
+                            test.PreReadAsync(
+                                cancellationToken: preReadCancellationToken),
+                            KeyPressedAsnc(
+                                ConsoleKey.Escape,
+                                cancellationToken: preReadCancellationToken))
+                        .GetAwaiter().GetResult()
+                        .GetAwaiter().GetResult();
+                    preReadCancellationTokenSource.Cancel();
 
                     if (result is LoopbackAdapterModePortTestResult.Failure
                         preReadFailure)
@@ -416,57 +419,33 @@ internal partial class Program
                     else if (result is LoopbackAdapterModePortTestResult.Success
                         preReadSuccess)
                     {
-                        var preReadData = preReadSuccess.Data;
-
-                        if (!string.IsNullOrEmpty(preReadData))
+                        if (preReadSuccess.Step == LoopbackAdapterModePortTestStep
+                            .PreRead)
                         {
-                            somethingRead = true;
-                            output.WriteLine($"Read {preReadData.Length} byte"
-                                + (preReadData.Length != 1 ? "s" : string.Empty)
-                                + ':');
-                            output.WriteLine("    As ASCII encoded: "
-                                + $"\"{preReadData}\".");
-                            output.WriteLine("    As hexadecimal bytes: "
-                                + Format(Encoding.ASCII.GetBytes(preReadData))
-                                + '.');
+                            var preReadData = preReadSuccess.Data;
+
+                            if (!string.IsNullOrEmpty(preReadData))
+                            {
+                                somethingRead = true;
+                                output.WriteLine($"Read {preReadData.Length} "
+                                    + "byte" + (preReadData.Length != 1 ? "s"
+                                        : string.Empty)
+                                    + ':');
+                                output.WriteLine("    As ASCII encoded: "
+                                    + $"\"{preReadData}\".");
+                                output.WriteLine("    As hexadecimal bytes: "
+                                    + Format(Encoding.ASCII.GetBytes(
+                                        preReadData))
+                                    + '.');
+                            }
+                        }
+                        else if (preReadSuccess.Step == LoopbackAdapterModePortTestStep
+                            .None)
+                        {
+                            escapeKeyPressed = true;
                         }
                     }
 
-                    escapeKeyPressed = KeyPressed(ConsoleKey.Escape);
-
-                    //stopwatch.Restart();
-
-                    //while (stopwatch.ElapsedMilliseconds < 3_000)
-                    //{
-                    //    var existing = serialPort.ReadExisting();
-
-                    //    if (!string.IsNullOrEmpty(existing))
-                    //    {
-                    //        somethingRead = true;
-                    //        output.WriteLine($"Read {existing.Length} byte"
-                    //            + (existing.Length != 1 ? "s" : string.Empty)
-                    //            + ':');
-                    //        output.WriteLine("    As ASCII encoded: "
-                    //            + $"\"{existing}\".");
-                    //        output.WriteLine("    As hexadecimal bytes: "
-                    //            + Format(Encoding.ASCII.GetBytes(existing))
-                    //            + '.');
-
-                    //        break;
-                    //    }
-
-                    //    ThrowIfCancellationRequested();
-                    //    Thread.Sleep(100);
-
-                    //    if (KeyPressed(ConsoleKey.Escape))
-                    //    {
-                    //        escapeKeyPressed = true;
-
-                    //        break;
-                    //    }
-                    //}
-
-                    //stopwatch.Stop();
                     ThrowIfCancellationRequested();
 
                     if (somethingRead)
@@ -504,12 +483,17 @@ internal partial class Program
 
                         if (ignore)
                         {
+                            output.WriteLine("Received response \"yes\". Going "
+                                + $"forward, ignoring port: \"{portName}\".");
                             _ = portsToIgnore.Add(portName);
                             errorsForTestedPorts[portName]
                                 = "User reqested to ignore.";
 
                             continue;
                         }
+
+                        output.WriteLine("Received response \"no\". Will "
+                            + $"continue to test port: \"{portName}\".");
                     }
                     else
                     {
@@ -518,62 +502,110 @@ internal partial class Program
 
                     ThrowIfCancellationRequested();
 
-                    var message = Guid.NewGuid().ToString();
-                    output.Write($"  Writting message \"{message}\"...");
-                    serialPort.WriteLine(message);
-                    output.WriteLine("DONE");
+                    var messageChannel = Channel.CreateUnbounded<string>(
+                        options: new UnboundedChannelOptions()
+                        {
+                            SingleReader = true,
+                            SingleWriter = true,
+                        });
+                    using var writeCancellationTokenSource
+                        = CancellationTokenSource.CreateLinkedTokenSource(
+                            cancellationToken);
+                    var writeCancellationToken
+                        = writeCancellationTokenSource.Token;
+                    result = Task
+                        .WhenAny(
+                            test.WriteAsync(messageChannel.Writer,
+                                cancellationToken: writeCancellationToken),
+                            WaitForWriteMessageAsync(messageChannel.Reader,
+                                output: output,
+                                cancellationToken: writeCancellationToken))
+                        .GetAwaiter().GetResult()
+                        .GetAwaiter().GetResult();
+                    writeCancellationTokenSource.Cancel();
+                    var message = string.Empty;
+
+                    if (result is LoopbackAdapterModePortTestResult.Failure
+                        writeFailure)
+                    {
+                        if (writeFailure.Exception is not null)
+                        {
+                            throw writeFailure.Exception;
+                        }
+
+                        throw new InvalidOperationException("Unhandled write "
+                            + "failure.");
+                    }
+                    else if (result is LoopbackAdapterModePortTestResult.Success
+                        writeSuccess)
+                    {
+                        if (writeSuccess.Step
+                            != LoopbackAdapterModePortTestStep.Write
+                            || string.IsNullOrEmpty(writeSuccess.Data))
+                        {
+                            throw new InvalidOperationException("Unhandled "
+                                + "write success.");
+                        }
+
+                        message = writeSuccess.Data;
+                        output.WriteLine("DONE");
+                    }
+                    else
+                    {
+                        throw new InvalidOperationException("Unhandled write "
+                            + "result.");
+                    }
+
                     ThrowIfCancellationRequested();
 
                     output.Write("  Listening for message...");
                     var success = false;
                     escapeKeyPressed = false;
-                    List<(long elapsed, string @event)> events = [];
-                    stopwatch.Restart();
+                    using var readCancellationTokenSource
+                        = CancellationTokenSource.CreateLinkedTokenSource(
+                            cancellationToken);
+                    var readCancellationToken
+                        = readCancellationTokenSource.Token;
+                    result = Task
+                        .WhenAny(
+                            test.ReadAsync(
+                                cancellationToken: readCancellationToken),
+                            KeyPressedAsnc(
+                                ConsoleKey.Escape,
+                                cancellationToken: readCancellationToken))
+                        .GetAwaiter().GetResult()
+                        .GetAwaiter().GetResult();
+                    readCancellationTokenSource.Cancel();
 
-                    while (stopwatch.ElapsedMilliseconds < 3_000)
+                    if (result is LoopbackAdapterModePortTestResult.Failure
+                        readFailure && readFailure.Exception is not null)
                     {
-                        try
+                        throw readFailure.Exception;
+                    }
+                    else if (result is LoopbackAdapterModePortTestResult.Success
+                        readSuccess)
+                    {
+                        if (readSuccess.Step == LoopbackAdapterModePortTestStep
+                            .Read)
                         {
-                            events.Add((stopwatch.ElapsedMilliseconds,
-                                "Begin serial read."));
-                            var readMessage = serialPort.ReadLine();
-                            events.Add((stopwatch.ElapsedMilliseconds,
-                                "End serial read."));
+                            var readData = readSuccess.Data;
 
-                            if (!string.IsNullOrEmpty(readMessage)
-                                && readMessage == message)
+                            if (!string.IsNullOrEmpty(readData)
+                                && readData == message)
                             {
-                                events.Add((stopwatch.ElapsedMilliseconds,
-                                    "Success read message."));
                                 output.WriteLine("SUCCESS. Read message: "
-                                    + $"\"{readMessage}\".");
+                                    + $"\"{readData}\".");
                                 success = true;
-
-                                break;
                             }
                         }
-                        catch (TimeoutException)
-                        {
-                            events.Add((stopwatch.ElapsedMilliseconds,
-                                "Serial timeout."));
-                        }
-
-                        ThrowIfCancellationRequested();
-                        events.Add((stopwatch.ElapsedMilliseconds,
-                            "Begin thread sleep."));
-                        Thread.Sleep(100);
-                        events.Add((stopwatch.ElapsedMilliseconds,
-                            "Begin thread sleep."));
-
-                        if (KeyPressed(ConsoleKey.Escape))
+                        else if (readSuccess.Step == LoopbackAdapterModePortTestStep
+                            .None)
                         {
                             escapeKeyPressed = true;
-
-                            break;
                         }
                     }
 
-                    stopwatch.Stop();
+                    ThrowIfCancellationRequested();
 
                     if (escapeKeyPressed)
                     {
@@ -586,7 +618,15 @@ internal partial class Program
 
                     ThrowIfCancellationRequested();
                     output.Write("  Closing...");
-                    CloseSerialPort();
+                    result = test.CloseAsync(cancellationToken).GetAwaiter()
+                        .GetResult();
+
+                    if (result is LoopbackAdapterModePortTestResult.Failure
+                        closeFailure && closeFailure.Exception is not null)
+                    {
+                        throw closeFailure.Exception;
+                    }
+
                     output.WriteLine("DONE");
                     ThrowIfCancellationRequested();
 
@@ -600,10 +640,15 @@ internal partial class Program
 
                         if (ignore)
                         {
+                            output.WriteLine("Received response \"yes\". Going "
+                                + $"forward, ignoring port: \"{portName}\".");
                             _ = portsToIgnore.Add(portName);
                             errorsForTestedPorts[portName]
                                 = "User reqested to ignore.";
                         }
+
+                        output.WriteLine("Received response \"no\". Will "
+                            + $"continue to test port: \"{portName}\".");
                     }
                     else if (success)
                     {
@@ -724,10 +769,6 @@ internal partial class Program
                         _ = portsToIgnore.Add(portName);
                         errorsForTestedPorts[portName] = typeAndMessage;
                     }
-                }
-                finally
-                {
-                    CloseSerialPort();
                 }
             }
         }
@@ -874,18 +915,6 @@ internal partial class Program
         }
 
         // Local functions:
-        // Ensure the current serial port is closed and disposed correctly.
-        void CloseSerialPort()
-        {
-            if (closeSerialPort && serialPort is not null && serialPort.IsOpen)
-            {
-                serialPort.Close();
-                serialPort.Dispose();
-                serialPort = null;
-                closeSerialPort = false;
-            }
-        }
-
         string Format(object? @object,
             [CallerArgumentExpression(nameof(@object))]
                 string? paramName = null,
@@ -990,6 +1019,36 @@ internal partial class Program
         {
             return consoleKeyInfo.Key == key
                 && consoleKeyInfo.Modifiers == modifiers;
+        }
+    }
+
+    static async Task<LoopbackAdapterModePortTestResult> KeyPressedAsnc(
+        ConsoleKey key, ConsoleModifiers modifiers = ConsoleModifiers.None,
+        bool intercept = true, bool readLast = true,
+        int sleepTimeoutInMilliseconds = 100,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            while (!KeyPressed(key, modifiers, intercept, readLast))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                await Task.Delay(sleepTimeoutInMilliseconds, cancellationToken);
+            }
+
+            return new LoopbackAdapterModePortTestResult.Success(
+                LoopbackAdapterModePortTestStep.None, true.ToString());
+        }
+        catch (OperationCanceledException)
+        {
+            return new LoopbackAdapterModePortTestResult.Failure(
+                LoopbackAdapterModePortTestStep.None, Data: false.ToString());
+        }
+        catch (Exception ex)
+        {
+            return new LoopbackAdapterModePortTestResult.Failure(
+                LoopbackAdapterModePortTestStep.None, Exception: ex);
         }
     }
 
@@ -1161,6 +1220,34 @@ internal partial class Program
             {
                 output.WriteLine("Unrecognized response. Please try again.");
             }
+        }
+    }
+
+    static async Task<LoopbackAdapterModePortTestResult>
+        WaitForWriteMessageAsync(ChannelReader<string> messageReader,
+        TextWriter? output = null,
+        CancellationToken cancellationToken = default)
+    {
+        output ??= TextWriter.Null;
+
+        try
+        {
+            var message = await messageReader.ReadAsync(cancellationToken);
+            output.Write($"  Writting message \"{message}\"...");
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+
+            return new LoopbackAdapterModePortTestResult.Success(
+                LoopbackAdapterModePortTestStep.None, string.Empty);
+        }
+        catch (OperationCanceledException)
+        {
+            return new LoopbackAdapterModePortTestResult.Failure(
+                LoopbackAdapterModePortTestStep.None);
+        }
+        catch (Exception ex)
+        {
+            return new LoopbackAdapterModePortTestResult.Failure(
+                LoopbackAdapterModePortTestStep.None, Exception: ex);
         }
     }
 }

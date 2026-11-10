@@ -6,24 +6,24 @@ using System.Diagnostics;
 using System.IO.Ports;
 using System.Text;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 
-public sealed class LoopbackAdapterModePortTest(SerialPort serialPort,
-    CancellationToken cancellationToken = default) : IDisposable
+public sealed class LoopbackAdapterModePortTest(SerialPort serialPort)
+    : IDisposable
 {
     private bool _disposedValue;
 
     private readonly Stopwatch _stopwatch = new();
 
-    public CancellationToken CancellationToken { get; } = cancellationToken;
-
     public SerialPort SerialPort { get; } = serialPort;
 
-    public async Task<LoopbackAdapterModePortTestResult> Open()
+    public async Task<LoopbackAdapterModePortTestResult> OpenAsync(
+        CancellationToken cancellationToken = default)
     {
         try
         {
-            CancellationToken.ThrowIfCancellationRequested();
+            cancellationToken.ThrowIfCancellationRequested();
 
             if (SerialPort.IsOpen)
             {
@@ -45,18 +45,19 @@ public sealed class LoopbackAdapterModePortTest(SerialPort serialPort,
         }
     }
 
-    public async Task<LoopbackAdapterModePortTestResult> PreRead(
+    public async Task<LoopbackAdapterModePortTestResult> PreReadAsync(
         int maxDurationInMilliseconds = 3_000,
-        int sleepTimeoutInMilliseconds = 100)
+        int sleepTimeoutInMilliseconds = 100,
+        CancellationToken cancellationToken = default)
     {
         try
         {
-            CancellationToken.ThrowIfCancellationRequested();
+            cancellationToken.ThrowIfCancellationRequested();
             _stopwatch.Restart();
 
             while (_stopwatch.ElapsedMilliseconds < maxDurationInMilliseconds)
             {
-                CancellationToken.ThrowIfCancellationRequested();
+                cancellationToken.ThrowIfCancellationRequested();
                 var existing = SerialPort.ReadExisting();
 
                 if (!string.IsNullOrEmpty(existing))
@@ -68,7 +69,7 @@ public sealed class LoopbackAdapterModePortTest(SerialPort serialPort,
                         Data: existing);
                 }
 
-                await Task.Delay(sleepTimeoutInMilliseconds, CancellationToken);
+                await Task.Delay(sleepTimeoutInMilliseconds, cancellationToken);
             }
 
             _stopwatch.Stop();
@@ -85,12 +86,88 @@ public sealed class LoopbackAdapterModePortTest(SerialPort serialPort,
         }
     }
 
-    public async Task<LoopbackAdapterModePortTestResult> Close()
+    public async Task<LoopbackAdapterModePortTestResult> WriteAsync(
+        ChannelWriter<string>? messageWriter = null,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var message = Guid.NewGuid().ToString();
+
+            if (messageWriter is not null)
+            {
+                await messageWriter.WriteAsync(message, cancellationToken);
+            }
+
+            SerialPort.WriteLine(message);
+
+            return new LoopbackAdapterModePortTestResult.Success(
+                Step: LoopbackAdapterModePortTestStep.Write,
+                Data: message);
+        }
+        catch (Exception ex)
+        {
+            return new LoopbackAdapterModePortTestResult.Failure(
+                Step: LoopbackAdapterModePortTestStep.Write,
+                Exception: ex);
+        }
+    }
+
+    public async Task<LoopbackAdapterModePortTestResult> ReadAsync(
+        int maxDurationInMilliseconds = 3_000,
+        int sleepTimeoutInMilliseconds = 100,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _stopwatch.Restart();
+
+            while (_stopwatch.ElapsedMilliseconds < maxDurationInMilliseconds)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                try
+                {
+                    var readLine = SerialPort.ReadLine();
+
+                    if (!string.IsNullOrEmpty(readLine))
+                    {
+                        _stopwatch.Stop();
+
+                        return new LoopbackAdapterModePortTestResult.Success(
+                            Step: LoopbackAdapterModePortTestStep.Read,
+                            Data: readLine);
+                    }
+                }
+                catch (TimeoutException)
+                { }
+
+                await Task.Delay(sleepTimeoutInMilliseconds, cancellationToken);
+            }
+
+            _stopwatch.Stop();
+
+            return new LoopbackAdapterModePortTestResult.Success(
+                Step: LoopbackAdapterModePortTestStep.Read,
+                Data: string.Empty);
+        }
+        catch (Exception ex)
+        {
+            return new LoopbackAdapterModePortTestResult.Failure(
+                Step: LoopbackAdapterModePortTestStep.Read,
+                Exception: ex);
+        }
+    }
+
+    public async Task<LoopbackAdapterModePortTestResult> CloseAsync(
+        CancellationToken cancellationToken = default)
     {
         try
         {
             SerialPort.Close();
-            CancellationToken.ThrowIfCancellationRequested();
+            cancellationToken.ThrowIfCancellationRequested();
 
             return new LoopbackAdapterModePortTestResult.Success(
                 Step: LoopbackAdapterModePortTestStep.Close,
