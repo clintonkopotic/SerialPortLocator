@@ -6,6 +6,7 @@ using System.IO;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 
 public class LoopbackAdapterModeTester
 {
@@ -14,8 +15,6 @@ public class LoopbackAdapterModeTester
     private readonly Dictionary<string, string> _notesForTestedPorts = [];
 
     private readonly ISet<string> _portsTested;
-
-    public CancellationToken CancellationToken { get; }
 
     public IFormatHelper FormatHelper { get; }
 
@@ -39,14 +38,13 @@ public class LoopbackAdapterModeTester
     public LoopbackAdapterModeTester(LoopbackAdapterModeOptions options,
         CancellationToken cancellationToken = default)
     {
-        CancellationToken = cancellationToken;
         Options = options;
 
         StatusWriter = options.StatusWriter;
         FormatHelper = options.FormatHelper;
-        ThrowIfCancellationRequested();
-        StatusFormatAndWriteLine(options.OriginalOrderOfPortNames);
-        PortsToTest = options.OriginalOrderOfPortNames
+        cancellationToken.ThrowIfCancellationRequested();
+        StatusFormatAndWriteLine(options.KeepOriginalOrderOfPortNames);
+        PortsToTest = options.KeepOriginalOrderOfPortNames
             ? new HashSet<string>(options.PortsToTest)
             : new SortedSet<string>(
                 collection: options.PortsToTest,
@@ -57,8 +55,8 @@ public class LoopbackAdapterModeTester
             StatusFormatAndWriteLine(PortsToTest);
         }
 
-        ThrowIfCancellationRequested();
-        PortsToIgnore = options.OriginalOrderOfPortNames
+        cancellationToken.ThrowIfCancellationRequested();
+        PortsToIgnore = options.KeepOriginalOrderOfPortNames
             ? new HashSet<string>(options.PortsToIgnore)
             : new SortedSet<string>(
                 collection: options.PortsToIgnore,
@@ -70,18 +68,21 @@ public class LoopbackAdapterModeTester
             _errorsForTestedPorts[portToIgnore] = "Provided option to ignore.";
         }
 
-        ThrowIfCancellationRequested();
+        cancellationToken.ThrowIfCancellationRequested();
         StatusFormatAndWriteLine(options.RetryPortsOnException);
         StatusFormatAndWriteLine(options.RetryPortsOnLocate);
-        _portsTested = options.OriginalOrderOfPortNames
+        _portsTested = options.KeepOriginalOrderOfPortNames
             ? new HashSet<string>()
             : new SortedSet<string>(
                 comparer: options.StringComparerForSort);
-        ThrowIfCancellationRequested();
+        cancellationToken.ThrowIfCancellationRequested();
     }
 
-    void ThrowIfCancellationRequested()
-        => CancellationToken.ThrowIfCancellationRequested();
+    public async Task GetAvailablePorts(
+        CancellationToken cancellationToken = default)
+    {
+
+    }
 
     void StatusFormatAndWrite(object? @object,
         [CallerArgumentExpression(nameof(@object))] string? paramName = null,

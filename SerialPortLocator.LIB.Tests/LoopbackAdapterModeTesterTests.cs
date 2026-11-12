@@ -17,7 +17,7 @@ public sealed class LoopbackAdapterModeTesterTests
         TextWriter writer = new StringWriter();
         _ = new LoopbackAdapterModeTester(options: new()
         {
-            OriginalOrderOfPortNames = false,
+            KeepOriginalOrderOfPortNames = false,
             PortsToIgnore = new HashSet<string>(
                 "COM1,COM2,COM3,COM4".Split(
                     separator: ',',
@@ -29,7 +29,7 @@ public sealed class LoopbackAdapterModeTesterTests
             actual: writer.ToString(),
             expected:
             """
-              options.OriginalOrderOfPortNames: False.
+              options.KeepOriginalOrderOfPortNames: False.
               PortsToIgnore: "COM1,COM2,COM3,COM4".
               options.RetryPortsOnException: False.
               options.RetryPortsOnLocate: False.

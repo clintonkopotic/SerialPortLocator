@@ -86,6 +86,28 @@ public class FormatHelper : IFormatHelper
         return output.ToString();
     }
 
+    public static string Format(Exception exception,
+        [CallerArgumentExpression(nameof(exception))] string? paramName = null,
+        string indent = "  ", bool nameWithIndent = true)
+    {
+        StringBuilder output = new();
+
+        if (nameWithIndent)
+        {
+            _ = output.Append(FormatNameWithIndentCore(paramName, indent));
+        }
+
+        _ = output.AppendFormat("Exception. {0}: {1}", exception.GetType(),
+            exception.Message);
+
+        if (nameWithIndent)
+        {
+            output.Append('.');
+        }
+
+        return output.ToString();
+    }
+
     public static string Format(ICollection<string> strings,
         [CallerArgumentExpression(nameof(strings))] string?
         paramName = null, string indent = "  ", bool nameWithIndent = true)
@@ -137,6 +159,34 @@ public class FormatHelper : IFormatHelper
         return output.ToString();
     }
 
+    public static string Format(
+        NullModemCableModePortTestResult.Failure failure,
+        [CallerArgumentExpression(nameof(failure))] string? paramName = null,
+        string indent = "  ", bool nameWithIndent = true)
+    {
+        StringBuilder output = new();
+
+        if (nameWithIndent)
+        {
+            _ = output.Append(FormatNameWithIndentCore(paramName, indent));
+        }
+
+        if (failure.Exception is not null)
+        {
+            _ = output.AppendFormat("Exception at step {0}. {1}: {2}",
+                Format(failure.Step, nameWithIndent: false),
+                failure.Exception.GetType().FullName,
+                failure.Exception.Message);
+        }
+
+        if (nameWithIndent)
+        {
+            _ = output.Append('.');
+        }
+
+        return output.ToString();
+    }
+
     public static string FormatCore(object? @object,
         [CallerArgumentExpression(nameof(@object))] string? paramName = null,
         string indent = "  ", bool nameWithIndent = true)
@@ -151,6 +201,11 @@ public class FormatHelper : IFormatHelper
         if (@object is null)
         {
             _ = output.Append(Null);
+        }
+        else if (@object is string @string)
+        {
+            _ = output.Append(Format(@string, indent: string.Empty,
+                nameWithIndent: false));
         }
         else if (@object is Enum @enum)
         {
@@ -170,6 +225,16 @@ public class FormatHelper : IFormatHelper
         else if (@object is ICollection<string> collectionOfStrings)
         {
             _ = output.Append(Format(collectionOfStrings,
+                indent: string.Empty, nameWithIndent: false));
+        }
+        else if (@object is Exception exception)
+        {
+            _ = output.Append(Format(exception,
+                indent: string.Empty, nameWithIndent: false));
+        }
+        else if (@object is NullModemCableModePortTestResult.Failure failure)
+        {
+            _ = output.Append(Format(failure,
                 indent: string.Empty, nameWithIndent: false));
         }
         else
@@ -213,11 +278,32 @@ public class FormatHelper : IFormatHelper
         return output.ToString();
     }
 
+    public static string Format(string @string,
+        [CallerArgumentExpression(nameof(@string))] string? paramName = null,
+        string indent = "  ", bool nameWithIndent = true)
+    {
+        StringBuilder output = new();
+
+        if (nameWithIndent)
+        {
+            _ = output.Append(FormatNameWithIndentCore(paramName, indent));
+        }
+
+        _ = output.Append($"\"{@string}\"");
+
+        if (nameWithIndent)
+        {
+            output.Append('.');
+        }
+
+        return output.ToString();
+    }
+
     public static string Format<TEnum>(TEnum @enum,
         [CallerArgumentExpression(nameof(@enum))] string?
         paramName = null, string indent = "  ", bool nameWithIndent = true)
         where TEnum : struct, Enum
-        => Format((Enum)@enum, paramName, indent, nameWithIndent);
+        => Format(@enum as Enum, paramName, indent, nameWithIndent);
 
     public static string FormatNameWithIndentCore(string? paramName,
         string indent = "  ")

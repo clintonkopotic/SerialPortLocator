@@ -70,8 +70,8 @@ internal partial class Program
                 + "located.",
         };
 
-    Option<bool> OriginalOrderOfPortNamesOption { get; }
-        = new("--original-order-of-port-names")
+    Option<bool> KeepOriginalOrderOfPortNamesOption { get; }
+        = new("--keep-original-order-of-port-names")
         {
             Description = "Keep the original order of the port names. The "
                 + "default behavior is to sort the port names.",
@@ -91,7 +91,7 @@ internal partial class Program
         = new("--list-port-names")
         {
             Description = "Lists the currently available port names, each on a "
-                + "separate line and in the original order.",
+                + "separate line and in the original order and then exits.",
         };
 
     int Execute(string[] args)
@@ -116,9 +116,9 @@ internal partial class Program
             rootCommand.Add(PortsToTestOption);
             rootCommand.Add(RetryPortsOnExceptionOption);
             rootCommand.Add(RetryPortsOnLocateOption);
-            rootCommand.Add(OriginalOrderOfPortNamesOption);
+            rootCommand.Add(KeepOriginalOrderOfPortNamesOption);
             // TODO: Add option when NullModemCable mode is implemented.
-            //rootCommand.Add(UseNullModemCableOption);
+            rootCommand.Add(UseNullModemCableOption);
             rootCommand.Add(ListAvailablePortNamesOption);
             CustomHelpAction.UpdateWith(rootCommand,
                 packageFunc: ListPackages);
@@ -177,11 +177,11 @@ internal partial class Program
             var retryPortsOnLocate = retryPortsOnLocateBool is not null
                 && retryPortsOnLocateBool.Value;
 
-            var originalOrderOfPortNamesBool = GetOptionStructValue(parseResult,
-                OriginalOrderOfPortNamesOption);
-            var originalOrderOfPortNames
-                = originalOrderOfPortNamesBool is not null
-                && originalOrderOfPortNamesBool.Value;
+            var keepOriginalOrderOfPortNamesBool = GetOptionStructValue(
+                parseResult, KeepOriginalOrderOfPortNamesOption);
+            var keepOriginalOrderOfPortNames
+                = keepOriginalOrderOfPortNamesBool is not null
+                && keepOriginalOrderOfPortNamesBool.Value;
 
             var useNullModemCableOptionResult = parseResult.GetResult(
                 UseNullModemCableOption);
@@ -205,7 +205,20 @@ internal partial class Program
                         PortsToTest = portsToTest,
                         RetryPortsOnException = retryPortsOnException,
                         RetryPortsOnLocate = retryPortsOnLocate,
-                        OriginalOrderOfPortNames = originalOrderOfPortNames,
+                        KeepOriginalOrderOfPortNames
+                            = keepOriginalOrderOfPortNames,
+                        StatusWriter = output,
+                    },
+                    cancellationToken: _cancellationTokenSource.Token),
+                LocatorMode.NullModemCable => ModeNullModemCable(
+                    options: new NullModemCableModeOptions()
+                    {
+                        PortsToIgnore = portsToIgnore,
+                        PortsToTest = portsToTest,
+                        RetryPortsOnException = retryPortsOnException,
+                        RetryPortsOnLocate = retryPortsOnLocate,
+                        KeepOriginalOrderOfPortNames
+                            = keepOriginalOrderOfPortNames,
                         StatusWriter = output,
                     },
                     cancellationToken: _cancellationTokenSource.Token),
@@ -246,11 +259,11 @@ internal partial class Program
     {
         var output = options.StatusWriter;
 
-        var originalOrderOfPortNames = options.OriginalOrderOfPortNames;
-        output.WriteLine(Format(originalOrderOfPortNames));
+        var keepOriginalOrderOfPortNames = options.KeepOriginalOrderOfPortNames;
+        output.WriteLine(Format(keepOriginalOrderOfPortNames));
 
         var sortComparer = options.StringComparerForSort;
-        ISet<string> portsToTest = originalOrderOfPortNames
+        ISet<string> portsToTest = keepOriginalOrderOfPortNames
             ? new HashSet<string>(options.PortsToTest)
             : new SortedSet<string>(options.PortsToTest, sortComparer);
 
@@ -259,7 +272,7 @@ internal partial class Program
             output.WriteLine(Format(portsToTest));
         }
 
-        ISet<string> portsToIgnore = originalOrderOfPortNames
+        ISet<string> portsToIgnore = keepOriginalOrderOfPortNames
             ? new HashSet<string>(options.PortsToIgnore)
             : new SortedSet<string>(options.PortsToIgnore, sortComparer);
         output.WriteLine(Format(portsToIgnore));
@@ -279,9 +292,9 @@ internal partial class Program
 
         Dictionary<string, string> notesForTestedPorts = [];
         var notesCount = 0;
-        Queue<string> portNames = [];
+        Queue<string> portNamesLeftToBeTested = [];
         SerialPort? serialPort = null;
-        ISet<string> portsTested = originalOrderOfPortNames
+        ISet<string> portsTested = keepOriginalOrderOfPortNames
             ? new HashSet<string>()
             : new SortedSet<string>(sortComparer);
 
@@ -295,7 +308,7 @@ internal partial class Program
                 {
                     ThrowIfCancellationRequested();
 
-                    if (portNames.Count <= 0)
+                    if (portNamesLeftToBeTested.Count <= 0)
                     {
                         output.WriteLine("Remember, press CTRL+C to exit.");
                         Thread.Sleep(1_000);
@@ -306,7 +319,7 @@ internal partial class Program
                             output.Write("Asking for a list of valid serial "
                                 + "port names...");
                             var portNamesArray = SerialPort.GetPortNames();
-                            _portsToTest = originalOrderOfPortNames
+                            _portsToTest = keepOriginalOrderOfPortNames
                                 ? new HashSet<string>(portNamesArray)
                                 : new SortedSet<string>(portNamesArray,
                                     sortComparer);
@@ -324,7 +337,7 @@ internal partial class Program
                             output.WriteLine(Format(_portsToTest,
                                 paramName: "portsToTest"));
                             output.WriteLine(Format(portsToIgnore));
-                            output.WriteLine(Format(portNames));
+                            output.WriteLine(Format(portNamesLeftToBeTested));
 
                             return 1;
                         }
@@ -332,16 +345,16 @@ internal partial class Program
                         output.Write($"Preparing to test {numberOfPorts} port"
                             + (numberOfPorts != 1 ? "s" : string.Empty)
                             + "...");
-                        portNames = new(_actualPortsToTest);
+                        portNamesLeftToBeTested = new(_actualPortsToTest);
                         output.WriteLine("READY");
                         output.WriteLine(Format(_portsToTest,
-                            paramName: "portsToTest"));
+                            paramName: $"{nameof(portsToTest)}"));
                         output.WriteLine(Format(portsToIgnore));
-                        output.WriteLine(Format(portNames));
+                        output.WriteLine(Format(portNamesLeftToBeTested));
                     }
 
                     ThrowIfCancellationRequested();
-                    portName = portNames.Dequeue();
+                    portName = portNamesLeftToBeTested.Dequeue();
 
                     if (portsToIgnore.Contains(portName))
                     {
@@ -397,7 +410,7 @@ internal partial class Program
                             cancellationToken);
                     var preReadCancellationToken
                         = preReadCancellationTokenSource.Token;
-                    result= Task
+                    result = Task
                         .WhenAny(
                             test.PreReadAsync(
                                 cancellationToken: preReadCancellationToken),
@@ -838,7 +851,441 @@ internal partial class Program
                     }
                 }
 
-                if (!originalOrderOfPortNames)
+                if (!keepOriginalOrderOfPortNames)
+                {
+                    List<(string note, string port)> notesAndPorts = [];
+                    List<(string port, string error)> portsAndErrors = [];
+
+                    foreach (var (port, note, noteIsError) in portsAndNotes)
+                    {
+                        if (noteIsError)
+                        {
+                            portsAndErrors.Add((port, note));
+                        }
+                        else
+                        {
+                            notesAndPorts.Add((note, port));
+                        }
+                    }
+
+                    if (notesAndPorts.Count > 0)
+                    {
+                        notesAndPorts.Sort((noteAndPortA, noteAndPortB) =>
+                        {
+                            var (noteA, portA) = noteAndPortA;
+                            var (noteB, portB) = noteAndPortB;
+
+                            var noteComparison = sortComparer.Compare(noteA,
+                                noteB);
+
+                            if (noteComparison != 0)
+                            {
+                                return noteComparison;
+                            }
+
+                            return sortComparer.Compare(portA, portB);
+                        });
+                        portsAndErrors.Sort((portAndErrorA, portAndErrorB) =>
+                        {
+                            var (portA, errorA) = portAndErrorA;
+                            var (portB, errorB) = portAndErrorB;
+
+                            var portComparison = sortComparer.Compare(portA,
+                                portB);
+
+                            if (portComparison != 0)
+                            {
+                                return portComparison;
+                            }
+
+                            return sortComparer.Compare(errorA, errorB);
+                        });
+
+                        Console.WriteLine();
+                        line = $"  {{0,{-maxNoteLength}}} | {{1,{-maxPortLength}}} "
+                            + $"| {{2}}";
+                        Console.WriteLine(line,
+                            PadCenterSpan(Note, maxNoteLength),
+                            PadCenterSpan(Port, maxPortLength),
+                            Error);
+                        Console.WriteLine($"  {new string('-', maxNoteLength)} +"
+                            + $" {new string('-', maxPortLength)} + ------");
+
+                        foreach (var (note, port) in notesAndPorts)
+                        {
+                            Console.WriteLine(line, note, port, string.Empty);
+                        }
+
+                        foreach (var (port, error) in portsAndErrors)
+                        {
+                            Console.WriteLine(line,
+                                PadCenterSpan(Asterisk, maxNoteLength),
+                                port, error);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Local functions:
+        string Format(object? @object,
+            [CallerArgumentExpression(nameof(@object))]
+                string? paramName = null,
+            string indent = "  ", bool nameWithIndent = true)
+            => options.FormatHelper.Format(@object, paramName, indent,
+                nameWithIndent);
+
+        void ThrowIfCancellationRequested()
+            => cancellationToken.ThrowIfCancellationRequested();
+    }
+
+    static int ModeNullModemCable(NullModemCableModeOptions options,
+        CancellationToken cancellationToken = default)
+    {
+        var output = options.StatusWriter;
+
+        var keepOriginalOrderOfPortNames = options.KeepOriginalOrderOfPortNames;
+        output.WriteLine(Format(keepOriginalOrderOfPortNames));
+
+        var sortComparer = options.StringComparerForSort;
+        ISet<string> portsToTest = keepOriginalOrderOfPortNames
+            ? new HashSet<string>(options.PortsToTest)
+            : new SortedSet<string>(options.PortsToTest, sortComparer);
+
+        if (portsToTest.Count > 0)
+        {
+            output.WriteLine(Format(portsToTest));
+        }
+
+        ISet<string> portsToIgnore = keepOriginalOrderOfPortNames
+            ? new HashSet<string>(options.PortsToIgnore)
+            : new SortedSet<string>(options.PortsToIgnore, sortComparer);
+        output.WriteLine(Format(portsToIgnore));
+        Dictionary<string, string> errorsForTestedPorts = [];
+
+        foreach (var port in portsToIgnore)
+        {
+            errorsForTestedPorts[port] = "Commandline provided option to "
+                + "ignore.";
+        }
+
+        var retryPortsOnException = options.RetryPortsOnException;
+        output.WriteLine(Format(retryPortsOnException));
+
+        var retryPortsOnLocate = options.RetryPortsOnLocate;
+        output.WriteLine(Format(retryPortsOnLocate));
+
+        Dictionary<string, string> notesForTestedPorts = [];
+        //var notesCount = 0;
+        List<string> portNamesLeftToBeTested = [];
+        ISet<string> portsTested = keepOriginalOrderOfPortNames
+            ? new HashSet<string>()
+            : new SortedSet<string>(sortComparer);
+        Stopwatch stopwatch = new();
+        var pluralSuffixS = string.Empty;
+
+        try
+        {
+            while (true)
+            {
+                try
+                {
+                    ThrowIfCancellationRequested();
+                    output.WriteLine("Remember, press CTRL+C to exit.");
+                    Thread.Sleep(1_000);
+                    var _portsToTest = portsToTest;
+
+                    if (portsToTest.Count <= 0)
+                    {
+                        output.Write("Asking for a list of valid serial port "
+                            + "names...");
+                        var portNamesArray = SerialPort.GetPortNames();
+                        _portsToTest = keepOriginalOrderOfPortNames
+                            ? new HashSet<string>(portNamesArray)
+                            : new SortedSet<string>(portNamesArray,
+                                sortComparer);
+                        output.WriteLine("DONE");
+                        ThrowIfCancellationRequested();
+                    }
+
+                    var _actualPortsToTest = new HashSet<string>(
+                        _portsToTest);
+                    _actualPortsToTest.ExceptWith(portsToIgnore);
+                    portNamesLeftToBeTested = [.. _actualPortsToTest];
+                    var numberOfPorts = portNamesLeftToBeTested.Count;
+
+                    if (numberOfPorts <= 0)
+                    {
+                        output.WriteLine("No ports to test:");
+                        output.WriteLine(Format(_portsToTest,
+                            paramName: "portsToTest"));
+                        output.WriteLine(Format(portsToIgnore));
+                        output.WriteLine(Format(portNamesLeftToBeTested));
+
+                        return 1;
+                    }
+
+                    pluralSuffixS = numberOfPorts != 1 ? "s" : string.Empty;
+                    output.Write($"Preparing to test {numberOfPorts} port"
+                        + $"{pluralSuffixS}...");
+                    var portSettings = SerialPortHelper.DefaultSettings;
+                    using NullModemCableModePortTestsRunner testsRunner = new(
+                        portNames: portNamesLeftToBeTested,
+                        portSettings: portSettings);
+                    output.WriteLine("READY");
+                    output.WriteLine(Format(_portsToTest,
+                        paramName: $"{nameof(portsToTest)}"));
+                    output.WriteLine(Format(portsToIgnore));
+                    output.WriteLine(Format(portNamesLeftToBeTested));
+                    output.WriteLine(Format(portSettings));
+                    ThrowIfCancellationRequested();
+
+                    output.Write("Opening...");
+                    stopwatch.Restart();
+                    var openResults = testsRunner.OpenAsync(cancellationToken)
+                        .GetAwaiter().GetResult();
+                    List<string> failedToOpenPortNames = [];
+
+                    foreach (var openResult in openResults)
+                    {
+                        if (openResult
+                            is NullModemCableModePortTestResult.Failure failure
+                            && failure.Exception is not null)
+                        {
+                            failedToOpenPortNames.Add(failure.PortName);
+                            errorsForTestedPorts[failure.PortName]
+                                = Format(failure, nameWithIndent: false);
+                            portsToIgnore.Add(failure.PortName);
+                        }
+                    }
+
+                    ThrowIfCancellationRequested();
+                    output.Write("DONE (");
+                    var failedToOpenCount = failedToOpenPortNames.Count;
+                    pluralSuffixS = failedToOpenCount != 1 ? "s" : string.Empty;
+                    stopwatch.Stop();
+
+                    if (failedToOpenCount > 0)
+                    {
+                        output.Write($"{failedToOpenCount} failure"
+                            + $"{pluralSuffixS} | ");
+                    }
+
+                    output.WriteLine($"Duration: {stopwatch.Elapsed})");
+
+                    if (failedToOpenCount > 0)
+                    {
+                        output.WriteLine(Format(failedToOpenPortNames,
+                            paramName: $"Failed Port{pluralSuffixS}"));
+                    }
+
+                    output.Write("Listening to ensure nothing read (press "
+                        + "CTRL+C to exit)...");
+                    stopwatch.Restart();
+                    var preReadResults = testsRunner.PreReadAsync(
+                        cancellationToken: cancellationToken)
+                        .GetAwaiter().GetResult();
+                    List<string> failedToPreReadPortNames = [];
+
+                    foreach (var preReadResult in preReadResults)
+                    {
+                        if (preReadResult
+                            is NullModemCableModePortTestResult.Failure failure
+                            && failure.Exception is not null)
+                        {
+                            failedToPreReadPortNames.Add(failure.PortName);
+                            errorsForTestedPorts[failure.PortName]
+                                = Format(failure, nameWithIndent: false);
+                            portsToIgnore.Add(failure.PortName);
+                        }
+                    }
+
+                    ThrowIfCancellationRequested();
+                    output.Write("DONE (");
+                    var failedToPreReadCount = failedToPreReadPortNames.Count;
+                    pluralSuffixS = failedToPreReadCount != 1 ? "s"
+                        : string.Empty;
+                    stopwatch.Stop();
+
+                    if (failedToPreReadCount > 0)
+                    {
+                        output.Write($"{failedToPreReadCount} failure"
+                            + $"{pluralSuffixS} | ");
+                    }
+
+                    output.WriteLine($"Duration: {stopwatch.Elapsed})");
+
+                    if (failedToPreReadCount > 0)
+                    {
+                        output.WriteLine(Format(failedToOpenPortNames,
+                            paramName: $"Failed Port{pluralSuffixS}"));
+                    }
+
+                    pluralSuffixS = testsRunner.Count != 1 ? "s" : string.Empty;
+                    output.Write($"Writting message{pluralSuffixS}...");
+                    stopwatch.Restart();
+                    var writeResults = testsRunner.WriteAsync(cancellationToken)
+                        .GetAwaiter().GetResult();
+                    List<string> failedToWritePortNames = [];
+
+                    foreach (var writeResult in writeResults)
+                    {
+                        if (writeResult
+                            is NullModemCableModePortTestResult.Failure failure
+                            && failure.Exception is not null)
+                        {
+                            failedToWritePortNames.Add(failure.PortName);
+                            errorsForTestedPorts[failure.PortName]
+                                = Format(failure, nameWithIndent: false);
+                            portsToIgnore.Add(failure.PortName);
+                        }
+                    }
+
+                    ThrowIfCancellationRequested();
+                    output.Write("DONE (");
+                    var failedToWriteCount = failedToWritePortNames.Count;
+                    pluralSuffixS = failedToWriteCount != 1 ? "s"
+                        : string.Empty;
+                    stopwatch.Stop();
+
+                    if (failedToWriteCount > 0)
+                    {
+                        output.Write($"{failedToWriteCount} failure"
+                            + $"{pluralSuffixS} | ");
+                    }
+
+                    output.WriteLine($"Duration: {stopwatch.Elapsed})");
+
+                    if (failedToWriteCount > 0)
+                    {
+                        output.WriteLine(Format(failedToWritePortNames,
+                            paramName: $"Failed Port{pluralSuffixS}"));
+                    }
+
+                    pluralSuffixS = testsRunner.Count != 1 ? "s"
+                        : string.Empty;
+                    output.Write($"Reading message{pluralSuffixS}...");
+                    stopwatch.Restart();
+                    var readResults = testsRunner.ReadAsync(
+                        cancellationToken: cancellationToken)
+                        .GetAwaiter().GetResult();
+                    List<string> failedToReadPortNames = [];
+
+                    foreach (var readResult in readResults)
+                    {
+                        if (readResult
+                            is NullModemCableModePortTestResult.Failure failure
+                            && failure.Exception is not null)
+                        {
+                            failedToReadPortNames.Add(failure.PortName);
+                            errorsForTestedPorts[failure.PortName]
+                                = Format(failure, nameWithIndent: false);
+                            portsToIgnore.Add(failure.PortName);
+                        }
+                    }
+
+                    ThrowIfCancellationRequested();
+                    output.Write("DONE (");
+                    var failedToReadCount = failedToReadPortNames.Count;
+                    pluralSuffixS = failedToReadCount != 1 ? "s" : string.Empty;
+                    stopwatch.Stop();
+
+                    if (failedToReadCount > 0)
+                    {
+                        output.Write($"{failedToReadCount} failure"
+                            + $"{pluralSuffixS} | ");
+                    }
+
+                    output.WriteLine($"Duration: {stopwatch.Elapsed})");
+
+                    if (failedToReadCount > 0)
+                    {
+                        output.WriteLine(Format(failedToWritePortNames,
+                            paramName: $"Failed Port{pluralSuffixS}"));
+                    }
+
+                    // TODO: Locate any loopback adapters or null-modem cables.
+                    throw new NotImplementedException();
+                }
+                catch (OperationCanceledException)
+                {
+                    return 0;
+                }
+                catch (Exception ex)
+                {
+                    output.WriteLine(Format(ex, nameWithIndent: false));
+
+                    return 1;
+                }
+            }
+        }
+        finally
+        {
+            const string Asterisk = "*";
+            const string Error = "Error";
+            const string Note = "Note";
+            const string Port = "Port";
+            List<(string port, string note, bool noteIsError)> portsAndNotes
+                = [];
+            var maxPortLength = Port.Length;
+            var maxNoteLength = Note.Length;
+
+            foreach (var port in portsTested)
+            {
+                if (errorsForTestedPorts.TryGetValue(port, out var error))
+                {
+                    portsAndNotes.Add((port, error, noteIsError: true));
+
+                    if (port.Length > maxPortLength)
+                    {
+                        maxPortLength = port.Length;
+                    }
+
+                    if (Asterisk.Length > maxNoteLength)
+                    {
+                        maxNoteLength = Asterisk.Length;
+                    }
+                }
+                else if (notesForTestedPorts.TryGetValue(port, out var note))
+                {
+                    portsAndNotes.Add((port, note, noteIsError: false));
+
+                    if (port.Length > maxPortLength)
+                    {
+                        maxPortLength = port.Length;
+                    }
+
+                    if (note.Length > maxNoteLength)
+                    {
+                        maxNoteLength = note.Length;
+                    }
+                }
+            }
+
+            if (portsAndNotes.Count > 0 && maxPortLength > 0)
+            {
+                Console.WriteLine();
+                var line = $"  {{0,{-maxPortLength}}} | {{1,{-maxNoteLength}}} "
+                    + $"| {{2}}";
+                Console.WriteLine(line, Port, Note, Error);
+                Console.WriteLine($"  {new string('-', maxPortLength)} +"
+                    + $" {new string('-', maxNoteLength)} + ------");
+
+                foreach (var (port, note, noteIsError) in portsAndNotes)
+                {
+                    if (noteIsError)
+                    {
+                        Console.WriteLine(line, port,
+                            PadCenterSpan(Asterisk, maxNoteLength),
+                            note);
+                    }
+                    else
+                    {
+                        Console.WriteLine(line, port, note, string.Empty);
+                    }
+                }
+
+                if (!keepOriginalOrderOfPortNames)
                 {
                     List<(string note, string port)> notesAndPorts = [];
                     List<(string port, string error)> portsAndErrors = [];
@@ -1087,7 +1534,7 @@ internal partial class Program
                 version = assemblyInformationalVersionAttribute
                     .InformationalVersion;
             }
-            
+
             if (string.IsNullOrEmpty(name) || version is null)
             {
                 continue;

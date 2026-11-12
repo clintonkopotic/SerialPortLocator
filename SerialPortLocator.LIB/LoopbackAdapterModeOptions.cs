@@ -15,7 +15,7 @@ public record LoopbackAdapterModeOptions
     public IReadOnlySet<string> PortsToTest { get; set; }
         = new HashSet<string>();
 
-    public bool OriginalOrderOfPortNames { get; set; }
+    public bool KeepOriginalOrderOfPortNames { get; set; }
 
     public bool RetryPortsOnException { get; set; }
 

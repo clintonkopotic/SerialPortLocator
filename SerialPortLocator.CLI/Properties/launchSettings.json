@@ -22,6 +22,10 @@
     "SerialPortLocator.CLI List": {
       "commandName": "Project",
       "commandLineArgs": "--list-port-names"
+    },
+    "SerialPortLocator.CLI Null-modem": {
+      "commandName": "Project",
+      "commandLineArgs": "--use-nullmodem-cable"
     }
   }
 }
