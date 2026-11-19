@@ -26,6 +26,10 @@
     "SerialPortLocator.CLI Null-modem": {
       "commandName": "Project",
       "commandLineArgs": "--use-nullmodem-cable"
+    },
+    "SerialPortLocator.CLI Null-modem Ignore": {
+      "commandName": "Project",
+      "commandLineArgs": "--use-nullmodem-cable --ports-to-ignore \"COM4,COM5,COM6,COM7\""
     }
   }
 }

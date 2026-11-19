@@ -1,6 +1,9 @@
 ﻿namespace SerialPortLocator.CLI;
 
+using NaturalSort.Extension;
+using SerialPortLocator.LIB;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.CommandLine;
 using System.Diagnostics;
@@ -14,7 +17,6 @@ using System.Text;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
-using SerialPortLocator.LIB;
 
 internal partial class Program
 {
@@ -787,144 +789,8 @@ internal partial class Program
         }
         finally
         {
-            const string Asterisk = "*";
-            const string Error = "Error";
-            const string Note = "Note";
-            const string Port = "Port";
-            List<(string port, string note, bool noteIsError)> portsAndNotes
-                = [];
-            var maxPortLength = Port.Length;
-            var maxNoteLength = Note.Length;
-
-            foreach (var port in portsTested)
-            {
-                if (errorsForTestedPorts.TryGetValue(port, out var error))
-                {
-                    portsAndNotes.Add((port, error, noteIsError: true));
-
-                    if (port.Length > maxPortLength)
-                    {
-                        maxPortLength = port.Length;
-                    }
-
-                    if (Asterisk.Length > maxNoteLength)
-                    {
-                        maxNoteLength = Asterisk.Length;
-                    }
-                }
-                else if (notesForTestedPorts.TryGetValue(port, out var note))
-                {
-                    portsAndNotes.Add((port, note, noteIsError: false));
-
-                    if (port.Length > maxPortLength)
-                    {
-                        maxPortLength = port.Length;
-                    }
-
-                    if (note.Length > maxNoteLength)
-                    {
-                        maxNoteLength = note.Length;
-                    }
-                }
-            }
-
-            if (portsAndNotes.Count > 0 && maxPortLength > 0)
-            {
-                Console.WriteLine();
-                var line = $"  {{0,{-maxPortLength}}} | {{1,{-maxNoteLength}}} "
-                    + $"| {{2}}";
-                Console.WriteLine(line, Port, Note, Error);
-                Console.WriteLine($"  {new string('-', maxPortLength)} +"
-                    + $" {new string('-', maxNoteLength)} + ------");
-
-                foreach (var (port, note, noteIsError) in portsAndNotes)
-                {
-                    if (noteIsError)
-                    {
-                        Console.WriteLine(line, port,
-                            PadCenterSpan(Asterisk, maxNoteLength),
-                            note);
-                    }
-                    else
-                    {
-                        Console.WriteLine(line, port, note, string.Empty);
-                    }
-                }
-
-                if (!keepOriginalOrderOfPortNames)
-                {
-                    List<(string note, string port)> notesAndPorts = [];
-                    List<(string port, string error)> portsAndErrors = [];
-
-                    foreach (var (port, note, noteIsError) in portsAndNotes)
-                    {
-                        if (noteIsError)
-                        {
-                            portsAndErrors.Add((port, note));
-                        }
-                        else
-                        {
-                            notesAndPorts.Add((note, port));
-                        }
-                    }
-
-                    if (notesAndPorts.Count > 0)
-                    {
-                        notesAndPorts.Sort((noteAndPortA, noteAndPortB) =>
-                        {
-                            var (noteA, portA) = noteAndPortA;
-                            var (noteB, portB) = noteAndPortB;
-
-                            var noteComparison = sortComparer.Compare(noteA,
-                                noteB);
-
-                            if (noteComparison != 0)
-                            {
-                                return noteComparison;
-                            }
-
-                            return sortComparer.Compare(portA, portB);
-                        });
-                        portsAndErrors.Sort((portAndErrorA, portAndErrorB) =>
-                        {
-                            var (portA, errorA) = portAndErrorA;
-                            var (portB, errorB) = portAndErrorB;
-
-                            var portComparison = sortComparer.Compare(portA,
-                                portB);
-
-                            if (portComparison != 0)
-                            {
-                                return portComparison;
-                            }
-
-                            return sortComparer.Compare(errorA, errorB);
-                        });
-
-                        Console.WriteLine();
-                        line = $"  {{0,{-maxNoteLength}}} | {{1,{-maxPortLength}}} "
-                            + $"| {{2}}";
-                        Console.WriteLine(line,
-                            PadCenterSpan(Note, maxNoteLength),
-                            PadCenterSpan(Port, maxPortLength),
-                            Error);
-                        Console.WriteLine($"  {new string('-', maxNoteLength)} +"
-                            + $" {new string('-', maxPortLength)} + ------");
-
-                        foreach (var (note, port) in notesAndPorts)
-                        {
-                            Console.WriteLine(line, note, port, string.Empty);
-                        }
-
-                        foreach (var (port, error) in portsAndErrors)
-                        {
-                            Console.WriteLine(line,
-                                PadCenterSpan(Asterisk, maxNoteLength),
-                                port, error);
-                        }
-                    }
-                }
-            }
+            WriteTablesForTestedPorts(output, portsTested, notesForTestedPorts,
+                errorsForTestedPorts, sortComparer);
         }
 
         // Local functions:
@@ -977,7 +843,7 @@ internal partial class Program
 
         Dictionary<string, string> notesForTestedPorts = [];
         //var notesCount = 0;
-        List<string> portNamesLeftToBeTested = [];
+        List<string> portsLeftToBeTested = [];
         ISet<string> portsTested = keepOriginalOrderOfPortNames
             ? new HashSet<string>()
             : new SortedSet<string>(sortComparer);
@@ -1011,8 +877,8 @@ internal partial class Program
                     var _actualPortsToTest = new HashSet<string>(
                         _portsToTest);
                     _actualPortsToTest.ExceptWith(portsToIgnore);
-                    portNamesLeftToBeTested = [.. _actualPortsToTest];
-                    var numberOfPorts = portNamesLeftToBeTested.Count;
+                    portsLeftToBeTested = [.. _actualPortsToTest];
+                    var numberOfPorts = portsLeftToBeTested.Count;
 
                     if (numberOfPorts <= 0)
                     {
@@ -1020,7 +886,7 @@ internal partial class Program
                         output.WriteLine(Format(_portsToTest,
                             paramName: "portsToTest"));
                         output.WriteLine(Format(portsToIgnore));
-                        output.WriteLine(Format(portNamesLeftToBeTested));
+                        output.WriteLine(Format(portsLeftToBeTested));
 
                         return 1;
                     }
@@ -1030,13 +896,13 @@ internal partial class Program
                         + $"{pluralSuffixS}...");
                     var portSettings = SerialPortHelper.DefaultSettings;
                     using NullModemCableModePortTestsRunner testsRunner = new(
-                        portNames: portNamesLeftToBeTested,
+                        portNames: portsLeftToBeTested,
                         portSettings: portSettings);
                     output.WriteLine("READY");
                     output.WriteLine(Format(_portsToTest,
                         paramName: $"{nameof(portsToTest)}"));
                     output.WriteLine(Format(portsToIgnore));
-                    output.WriteLine(Format(portNamesLeftToBeTested));
+                    output.WriteLine(Format(portsLeftToBeTested));
                     output.WriteLine(Format(portSettings));
                     ThrowIfCancellationRequested();
 
@@ -1126,6 +992,7 @@ internal partial class Program
                     stopwatch.Restart();
                     var writeResults = testsRunner.WriteAsync(cancellationToken)
                         .GetAwaiter().GetResult();
+                    Dictionary<string, string> writeTestData = [];
                     List<string> failedToWritePortNames = [];
 
                     foreach (var writeResult in writeResults)
@@ -1138,6 +1005,13 @@ internal partial class Program
                             errorsForTestedPorts[failure.PortName]
                                 = Format(failure, nameWithIndent: false);
                             portsToIgnore.Add(failure.PortName);
+                        }
+                        else if (writeResult
+                            is NullModemCableModePortTestResult.Success success
+                            && !string.IsNullOrWhiteSpace(success.PortName)
+                            && !string.IsNullOrWhiteSpace(success.Data))
+                        {
+                            writeTestData[success.PortName] = success.Data;
                         }
                     }
 
@@ -1162,6 +1036,13 @@ internal partial class Program
                             paramName: $"Failed Port{pluralSuffixS}"));
                     }
 
+                    if (writeTestData.Count <= 0)
+                    {
+                        output.WriteLine("No successful writes.");
+
+                        continue;
+                    }
+
                     pluralSuffixS = testsRunner.Count != 1 ? "s"
                         : string.Empty;
                     output.Write($"Reading message{pluralSuffixS}...");
@@ -1170,6 +1051,7 @@ internal partial class Program
                         cancellationToken: cancellationToken)
                         .GetAwaiter().GetResult();
                     List<string> failedToReadPortNames = [];
+                    Dictionary<string, string> readTestData = [];
 
                     foreach (var readResult in readResults)
                     {
@@ -1181,6 +1063,13 @@ internal partial class Program
                             errorsForTestedPorts[failure.PortName]
                                 = Format(failure, nameWithIndent: false);
                             portsToIgnore.Add(failure.PortName);
+                        }
+                        else if (readResult
+                            is NullModemCableModePortTestResult.Success success
+                            && !string.IsNullOrWhiteSpace(success.PortName)
+                            && !string.IsNullOrWhiteSpace(success.Data))
+                        {
+                            readTestData[success.PortName] = success.Data;
                         }
                     }
 
@@ -1204,6 +1093,71 @@ internal partial class Program
                             paramName: $"Failed Port{pluralSuffixS}"));
                     }
 
+                    if (readTestData.Count <= 0)
+                    {
+                        output.WriteLine("Nothing read. No loopback adapters "
+                            + "or null-modem cables detected.");
+
+                        continue;
+                    }
+
+                    var readTestDataCount = readTestData.Count;
+                    pluralSuffixS = readTestDataCount != 1 ? "s" : string.Empty;
+                    output.Write($"Analyzing {readTestDataCount} result"
+                        + $"{pluralSuffixS}...");
+                    string _readPortName = string.Empty;
+                    List<List<string>> results = [];
+                    List<string> foundLoopbackAdapters = [];
+                    List<(string, string)> foundNullModemCables = [];
+
+                    foreach (var portName in _portsToTest)
+                    {
+                        if (!writeTestData.TryGetValue(portName,
+                                out var writeData)
+                            || string.IsNullOrWhiteSpace(writeData))
+                        {
+                            continue;
+                        }
+
+                        _readPortName = string.Empty;
+
+                        foreach (var (readPortName, readData) in readTestData)
+                        {
+                            if (!string.IsNullOrWhiteSpace(readPortName)
+                                && !string.IsNullOrWhiteSpace(readData)
+                                && writeData == readData)
+                            {
+                                _readPortName = readPortName;
+
+                                if (portName == _readPortName)
+                                {
+                                    foundLoopbackAdapters.Add(portName);
+                                }
+                                else
+                                {
+                                    foundNullModemCables.Add(
+                                        (portName, _readPortName));
+                                }
+
+                                break;
+                            }
+                        }
+
+                        results.Add([portName, _readPortName,
+                            Format(writeData, nameWithIndent: false)]);
+                    }
+
+                    var table = FormatAsTable(
+                        rows: results,
+                        minimizeLastColumn: true,
+                        indent: "  ",
+                        columnNames: ["Tx>", ">Rx", "Data"]);
+                    output.WriteLine("DONE");
+                    output.WriteLine("The following table shows which ports "
+                        + "were written from, the data, and which ports read "
+                        + "that data:");
+                    output.Write(table);
+
                     // TODO: Locate any loopback adapters or null-modem cables.
                     throw new NotImplementedException();
                 }
@@ -1221,144 +1175,8 @@ internal partial class Program
         }
         finally
         {
-            const string Asterisk = "*";
-            const string Error = "Error";
-            const string Note = "Note";
-            const string Port = "Port";
-            List<(string port, string note, bool noteIsError)> portsAndNotes
-                = [];
-            var maxPortLength = Port.Length;
-            var maxNoteLength = Note.Length;
-
-            foreach (var port in portsTested)
-            {
-                if (errorsForTestedPorts.TryGetValue(port, out var error))
-                {
-                    portsAndNotes.Add((port, error, noteIsError: true));
-
-                    if (port.Length > maxPortLength)
-                    {
-                        maxPortLength = port.Length;
-                    }
-
-                    if (Asterisk.Length > maxNoteLength)
-                    {
-                        maxNoteLength = Asterisk.Length;
-                    }
-                }
-                else if (notesForTestedPorts.TryGetValue(port, out var note))
-                {
-                    portsAndNotes.Add((port, note, noteIsError: false));
-
-                    if (port.Length > maxPortLength)
-                    {
-                        maxPortLength = port.Length;
-                    }
-
-                    if (note.Length > maxNoteLength)
-                    {
-                        maxNoteLength = note.Length;
-                    }
-                }
-            }
-
-            if (portsAndNotes.Count > 0 && maxPortLength > 0)
-            {
-                Console.WriteLine();
-                var line = $"  {{0,{-maxPortLength}}} | {{1,{-maxNoteLength}}} "
-                    + $"| {{2}}";
-                Console.WriteLine(line, Port, Note, Error);
-                Console.WriteLine($"  {new string('-', maxPortLength)} +"
-                    + $" {new string('-', maxNoteLength)} + ------");
-
-                foreach (var (port, note, noteIsError) in portsAndNotes)
-                {
-                    if (noteIsError)
-                    {
-                        Console.WriteLine(line, port,
-                            PadCenterSpan(Asterisk, maxNoteLength),
-                            note);
-                    }
-                    else
-                    {
-                        Console.WriteLine(line, port, note, string.Empty);
-                    }
-                }
-
-                if (!keepOriginalOrderOfPortNames)
-                {
-                    List<(string note, string port)> notesAndPorts = [];
-                    List<(string port, string error)> portsAndErrors = [];
-
-                    foreach (var (port, note, noteIsError) in portsAndNotes)
-                    {
-                        if (noteIsError)
-                        {
-                            portsAndErrors.Add((port, note));
-                        }
-                        else
-                        {
-                            notesAndPorts.Add((note, port));
-                        }
-                    }
-
-                    if (notesAndPorts.Count > 0)
-                    {
-                        notesAndPorts.Sort((noteAndPortA, noteAndPortB) =>
-                        {
-                            var (noteA, portA) = noteAndPortA;
-                            var (noteB, portB) = noteAndPortB;
-
-                            var noteComparison = sortComparer.Compare(noteA,
-                                noteB);
-
-                            if (noteComparison != 0)
-                            {
-                                return noteComparison;
-                            }
-
-                            return sortComparer.Compare(portA, portB);
-                        });
-                        portsAndErrors.Sort((portAndErrorA, portAndErrorB) =>
-                        {
-                            var (portA, errorA) = portAndErrorA;
-                            var (portB, errorB) = portAndErrorB;
-
-                            var portComparison = sortComparer.Compare(portA,
-                                portB);
-
-                            if (portComparison != 0)
-                            {
-                                return portComparison;
-                            }
-
-                            return sortComparer.Compare(errorA, errorB);
-                        });
-
-                        Console.WriteLine();
-                        line = $"  {{0,{-maxNoteLength}}} | {{1,{-maxPortLength}}} "
-                            + $"| {{2}}";
-                        Console.WriteLine(line,
-                            PadCenterSpan(Note, maxNoteLength),
-                            PadCenterSpan(Port, maxPortLength),
-                            Error);
-                        Console.WriteLine($"  {new string('-', maxNoteLength)} +"
-                            + $" {new string('-', maxPortLength)} + ------");
-
-                        foreach (var (note, port) in notesAndPorts)
-                        {
-                            Console.WriteLine(line, note, port, string.Empty);
-                        }
-
-                        foreach (var (port, error) in portsAndErrors)
-                        {
-                            Console.WriteLine(line,
-                                PadCenterSpan(Asterisk, maxNoteLength),
-                                port, error);
-                        }
-                    }
-                }
-            }
+            WriteTablesForTestedPorts(output, portsTested, notesForTestedPorts,
+                errorsForTestedPorts, sortComparer);
         }
 
         // Local functions:
@@ -1371,6 +1189,135 @@ internal partial class Program
 
         void ThrowIfCancellationRequested()
             => cancellationToken.ThrowIfCancellationRequested();
+    }
+
+    static string FormatAsTable(IEnumerable<IEnumerable<string>> rows,
+        bool minimizeLastColumn, string? indent,
+        params string[] columnNames)
+        => FormatAsTable(rows, minimizeLastColumn, indent,
+            (IEnumerable<string>)columnNames);
+
+    static string FormatAsTable(IEnumerable<IEnumerable<string>> rows,
+        bool minimizeLastColumn, string? indent,
+        params IEnumerable<string> columnNames)
+    {
+        const char cross = '+';
+        const char horizontalBar = '-';
+        const char verticalBar = '|';
+        indent ??= string.Empty;
+        StringBuilder output = new();
+        List<int> maxColumnLengths = [];
+        var rowIndex = 0;
+        int columnIndex;
+
+        foreach (var row in rows)
+        {
+            columnIndex = 0;
+
+            foreach (var cell in row)
+            {
+                if (columnIndex < maxColumnLengths.Count)
+                {
+                    if (cell.Length > maxColumnLengths[columnIndex])
+                    {
+                        maxColumnLengths[columnIndex] = cell.Length;
+                    }
+                }
+                else
+                {
+                    maxColumnLengths.Add(cell.Length);
+                }
+
+                columnIndex++;
+            }
+
+            rowIndex++;
+        }
+
+        List<string> _columnNames = [];
+
+        foreach (var columnName in columnNames)
+        {
+            _columnNames.Add(columnName);
+        }
+
+        for (var i = 0; i < maxColumnLengths.Count; i++)
+        {
+            if (i >= _columnNames.Count)
+            {
+                _columnNames.Add($"{i + 1}");
+            }
+
+            if (_columnNames[i].Length > maxColumnLengths[i]
+                || (minimizeLastColumn && i == (maxColumnLengths.Count - 1)))
+            {
+                maxColumnLengths[i] = _columnNames[i].Length;
+            }
+        }
+
+        List<string> cellFormats = [];
+
+        for (var i = 0; i < maxColumnLengths.Count; i++)
+        {
+            cellFormats.Add($"{{0,-{maxColumnLengths[i]}}}");
+        }
+
+        // Output the column header names (aligned center).
+        _ = output.Append(indent);
+        columnIndex = 0;
+
+        foreach (var _columnName in _columnNames)
+        {
+            if (columnIndex > 0)
+            {
+                _ = output.Append($" {verticalBar} ");
+            }
+
+            _ = output.Append(PadCenterSpan(_columnName,
+                maxColumnLengths[columnIndex]));
+            columnIndex++;
+        }
+
+        _ = output.AppendLine();
+
+        // Output the border between column headers and the body.
+        _ = output.Append(indent);
+        columnIndex = 0;
+
+        foreach (var _columnName in _columnNames)
+        {
+            if (columnIndex > 0)
+            {
+                _ = output.Append($"{horizontalBar}{cross}{horizontalBar}");
+            }
+
+            _ = output.Append(horizontalBar, maxColumnLengths[columnIndex]);
+            columnIndex++;
+        }
+
+        _ = output.AppendLine();
+
+        // Output the table rows.
+        foreach (var row in rows)
+        {
+            _ = output.Append(indent);
+            columnIndex = 0;
+
+            foreach (var cell in row)
+            {
+                if (columnIndex > 0)
+                {
+                    _ = output.Append($" {verticalBar} ");
+                }
+
+                _ = output.AppendFormat(cellFormats[columnIndex], cell);
+                columnIndex++;
+            }
+
+            _ = output.AppendLine();
+        }
+
+        return output.ToString();
     }
 
     /// <summary>
@@ -1695,6 +1642,71 @@ internal partial class Program
         {
             return new LoopbackAdapterModePortTestResult.Failure(
                 LoopbackAdapterModePortTestStep.None, Exception: ex);
+        }
+    }
+
+    static void WriteTablesForTestedPorts(TextWriter output,
+        ISet<string> portsTested,
+        Dictionary<string, string> notes,
+        Dictionary<string, string> errors,
+        IComparer<string>? sortComparer = null)
+    {
+        const string Asterisk = "*";
+        const string Error = "Error";
+        const string Note = "Note";
+        const string Port = "Port";
+        sortComparer ??= StringComparison.OrdinalIgnoreCase
+            .WithNaturalSort();
+        List<List<string>> rows = [];
+
+        foreach (var port in portsTested)
+        {
+            if (errors.TryGetValue(port, out var error))
+            {
+                rows.Add([port, Asterisk, error]);
+            }
+            else if (notes.TryGetValue(port, out var note))
+            {
+                rows.Add([port, note, string.Empty]);
+            }
+        }
+
+        if (rows.Count > 0)
+        {
+            string[] columnNames = [Port, Note, Error];
+            output.WriteLine();
+            output.Write(FormatAsTable(
+                rows: rows,
+                minimizeLastColumn: true,
+                indent: "  ",
+                columnNames: columnNames));
+
+            rows.Sort((rowA, rowB) =>
+            {
+                var i = 1;
+                var noteA = i < rowA.Count ? rowA[i] : string.Empty;
+                var noteB = i < rowB.Count ? rowB[i] : string.Empty;
+                var noteComparison = sortComparer.Compare(noteA,
+                            noteB);
+
+                if (noteComparison != 0)
+                {
+                    return noteComparison;
+                }
+
+                i = 0;
+                var portA = i < rowA.Count ? rowA[i] : string.Empty;
+                var portB = i < rowB.Count ? rowB[i] : string.Empty;
+
+                return sortComparer.Compare(portA, portB);
+            });
+
+            output.WriteLine();
+            output.Write(FormatAsTable(
+                rows: rows,
+                minimizeLastColumn: true,
+                indent: "  ",
+                columnNames: columnNames));
         }
     }
 }

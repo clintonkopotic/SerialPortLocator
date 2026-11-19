@@ -4,7 +4,6 @@ using System;
 using System.Diagnostics;
 using System.IO.Ports;
 using System.Threading;
-using System.Threading.Channels;
 using System.Threading.Tasks;
 
 public sealed class NullModemCableModePortTest(SerialPort serialPort)
