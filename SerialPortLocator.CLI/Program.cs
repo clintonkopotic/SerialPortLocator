@@ -1,9 +1,6 @@
 ﻿namespace SerialPortLocator.CLI;
 
-using NaturalSort.Extension;
-using SerialPortLocator.LIB;
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.CommandLine;
 using System.Diagnostics;
@@ -17,6 +14,8 @@ using System.Text;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
+using NaturalSort.Extension;
+using SerialPortLocator.LIB;
 
 internal partial class Program
 {
@@ -295,7 +294,7 @@ internal partial class Program
         Dictionary<string, string> notesForTestedPorts = [];
         var notesCount = 0;
         Queue<string> portNamesLeftToBeTested = [];
-        SerialPort? serialPort = null;
+        SerialPort? serialPort;
         ISet<string> portsTested = keepOriginalOrderOfPortNames
             ? new HashSet<string>()
             : new SortedSet<string>(sortComparer);
@@ -1108,7 +1107,7 @@ internal partial class Program
                     string _readPortName = string.Empty;
                     List<List<string>> results = [];
                     List<string> foundLoopbackAdapters = [];
-                    List<(string, string)> foundNullModemCables = [];
+                    SortedSet<PairOfPortNames> foundNullModemCables = [];
 
                     foreach (var portName in _portsToTest)
                     {
@@ -1136,7 +1135,7 @@ internal partial class Program
                                 else
                                 {
                                     foundNullModemCables.Add(
-                                        (portName, _readPortName));
+                                        new(portName, _readPortName));
                                 }
 
                                 break;
@@ -1153,10 +1152,12 @@ internal partial class Program
                         indent: "  ",
                         columnNames: ["Tx>", ">Rx", "Data"]);
                     output.WriteLine("DONE");
+                    output.WriteLine(Format(foundLoopbackAdapters));
+                    output.WriteLine(Format(foundNullModemCables));
                     output.WriteLine("The following table shows which ports "
-                        + "were written from, the data, and which ports read "
-                        + "that data:");
-                    output.Write(table);
+                        + "were written from, which ports read data, and "
+                        + "what that data was:");
+                    output.WriteLine(table);
 
                     // TODO: Locate any loopback adapters or null-modem cables.
                     throw new NotImplementedException();
@@ -1201,11 +1202,13 @@ internal partial class Program
         bool minimizeLastColumn, string? indent,
         params IEnumerable<string> columnNames)
     {
-        const char cross = '+';
-        const char horizontalBar = '-';
-        const char verticalBar = '|';
+        const char Cross = '+';
+        const char HorizontalBar = '-';
+        const char VerticalBar = '|';
         indent ??= string.Empty;
         StringBuilder output = new();
+
+        // Determine the longest item for each column.
         List<int> maxColumnLengths = [];
         var rowIndex = 0;
         int columnIndex;
@@ -1234,6 +1237,13 @@ internal partial class Program
             rowIndex++;
         }
 
+        // If there aren't any items, then just return an empty string.
+        if (maxColumnLengths.Count <= 0)
+        {
+            return string.Empty;
+        }
+
+        // Copy over provided column names, if any.
         List<string> _columnNames = [];
 
         foreach (var columnName in columnNames)
@@ -1241,6 +1251,8 @@ internal partial class Program
             _columnNames.Add(columnName);
         }
 
+        // Ensure each column name has at least its number (starting at one),
+        // and update the maxColumnLengths array if the column name is longer.
         for (var i = 0; i < maxColumnLengths.Count; i++)
         {
             if (i >= _columnNames.Count)
@@ -1255,6 +1267,9 @@ internal partial class Program
             }
         }
 
+        // Build the format string for each item for their column so that
+        // formatted string will have the same length with space filled and
+        // left aligned.
         List<string> cellFormats = [];
 
         for (var i = 0; i < maxColumnLengths.Count; i++)
@@ -1270,7 +1285,7 @@ internal partial class Program
         {
             if (columnIndex > 0)
             {
-                _ = output.Append($" {verticalBar} ");
+                _ = output.Append($" {VerticalBar} ");
             }
 
             _ = output.Append(PadCenterSpan(_columnName,
@@ -1288,18 +1303,17 @@ internal partial class Program
         {
             if (columnIndex > 0)
             {
-                _ = output.Append($"{horizontalBar}{cross}{horizontalBar}");
+                _ = output.Append($"{HorizontalBar}{Cross}{HorizontalBar}");
             }
 
-            _ = output.Append(horizontalBar, maxColumnLengths[columnIndex]);
+            _ = output.Append(HorizontalBar, maxColumnLengths[columnIndex]);
             columnIndex++;
         }
-
-        _ = output.AppendLine();
 
         // Output the table rows.
         foreach (var row in rows)
         {
+            _ = output.AppendLine();
             _ = output.Append(indent);
             columnIndex = 0;
 
@@ -1307,14 +1321,12 @@ internal partial class Program
             {
                 if (columnIndex > 0)
                 {
-                    _ = output.Append($" {verticalBar} ");
+                    _ = output.Append($" {VerticalBar} ");
                 }
 
                 _ = output.AppendFormat(cellFormats[columnIndex], cell);
                 columnIndex++;
             }
-
-            _ = output.AppendLine();
         }
 
         return output.ToString();
@@ -1675,7 +1687,7 @@ internal partial class Program
         {
             string[] columnNames = [Port, Note, Error];
             output.WriteLine();
-            output.Write(FormatAsTable(
+            output.WriteLine(FormatAsTable(
                 rows: rows,
                 minimizeLastColumn: true,
                 indent: "  ",
@@ -1702,7 +1714,7 @@ internal partial class Program
             });
 
             output.WriteLine();
-            output.Write(FormatAsTable(
+            output.WriteLine(FormatAsTable(
                 rows: rows,
                 minimizeLastColumn: true,
                 indent: "  ",

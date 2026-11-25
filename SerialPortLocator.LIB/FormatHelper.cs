@@ -108,6 +108,42 @@ public class FormatHelper : IFormatHelper
         return output.ToString();
     }
 
+    public static string Format(ICollection<PairOfPortNames> pairsOfPortNames,
+        [CallerArgumentExpression(nameof(pairsOfPortNames))] string?
+        paramName = null, string indent = "  ", bool nameWithIndent = true)
+    {
+        StringBuilder output = new();
+
+        if (nameWithIndent)
+        {
+            _ = output.Append(FormatNameWithIndentCore(paramName, indent));
+        }
+
+        if (pairsOfPortNames.Count > 0)
+        {
+            List<string> strings = [];
+
+            foreach (var pairOfPortNames in pairsOfPortNames)
+            {
+                strings.Add($"({pairOfPortNames.PortNameA} "
+                    + $"X {pairOfPortNames.PortNameB})");
+            }
+
+            output.Append($"\"{CsvArgumentEncoder.Encode(strings)}\"");
+        }
+        else
+        {
+            output.Append(None);
+        }
+
+        if (nameWithIndent)
+        {
+            output.Append('.');
+        }
+
+        return output.ToString();
+    }
+
     public static string Format(ICollection<string> strings,
         [CallerArgumentExpression(nameof(strings))] string?
         paramName = null, string indent = "  ", bool nameWithIndent = true)
@@ -220,6 +256,12 @@ public class FormatHelper : IFormatHelper
         else if (@object is Queue<string> queueOfStrings)
         {
             _ = output.Append(Format(queueOfStrings,
+                indent: string.Empty, nameWithIndent: false));
+        }
+        else if (@object
+            is ICollection<PairOfPortNames> collectionOfPairsOfPortNames)
+        {
+            _ = output.Append(Format(collectionOfPairsOfPortNames,
                 indent: string.Empty, nameWithIndent: false));
         }
         else if (@object is ICollection<string> collectionOfStrings)
